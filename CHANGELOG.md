@@ -10,7 +10,7 @@
 - 提供完整的 Config Schema
 
 ### 依赖
-- `@yourscope/dsh-motor-ai-core`: ^1.0.0（共享核心）
+- `@wangxue98/dsh-motor-ai-core`: ^1.0.0（共享核心）
 - `@deepseek-ai/dsh`: >=0.1.2 <0.2.0
 
 ### 状态

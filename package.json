@@ -17,7 +17,7 @@
     "@deepseek-ai/dsh": ">=0.1.2 <0.2.0"
   },
   "dependencies": {
-    "@yourscope/dsh-motor-ai-core": "^1.0.0"
+    "@wangxue98/dsh-motor-ai-core": "^1.0.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^0.1.17",
@@ -35,12 +35,19 @@
     "rmxprt",
     "motor-cad"
   ],
-  "author": "Motor-AI Team",
-  "license": "MIT",
+  "author": {
+    "name": "wangxuewangxue98",
+    "url": "https://github.com/wangxuewangxue98"
+  },
+  "license": "PolyForm-Noncommercial-1.0.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/dsh-motor-ai"
+    "url": "git+https://github.com/wangxuewangxue98/dsh-motor-ai.git"
   },
+  "bugs": {
+    "url": "https://github.com/wangxuewangxue98/dsh-motor-ai/issues"
+  },
+  "homepage": "https://github.com/wangxuewangxue98/dsh-motor-ai#readme",
   "files": [
     "index.mjs",
     "lib/",
@@ -48,6 +55,9 @@
     "models/",
     "scripts/",
     "skills/",
+    "LICENSE",
+    "CHANGELOG.md",
+    "README.md",
     "package.json"
   ],
   "engines": {

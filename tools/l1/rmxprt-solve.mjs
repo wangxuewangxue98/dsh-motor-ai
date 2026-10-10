@@ -13,7 +13,7 @@
  *   - L1: RMxprt 磁路法，秒级，TopN 精选
  */
 
-import { resolveMotorType } from '@yourscope/dsh-motor-ai-core'
+import { resolveMotorType } from '@wangxue98/dsh-motor-ai-core'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,13 +28,46 @@ export const L1_TOOL_NAMES = [
 ]
 
 /**
- * RMxprt 求解器路径（可通过环境变量覆盖）
+ * RMxprt 求解器与 Python 解释器路径解析。
+ *
+ * 优先使用环境变量；若未配置，则尝试从 PATH 里的 `python` 兜底。
+ * **不内置任何本机绝对路径** —— 求解器路径属于部署环境配置，
+ * 由使用者通过环境变量或 PATH 提供。
+ *
+ * 环境变量:
+ *   - RMXPRT_WORKER_PATH: `_rmxprt_venv_worker.py` 的完整路径（最高优先级）
+ *   - PYTHON_BIN:         驱动求解器的 Python 解释器完整路径
+ *   - MOTORDESIGN_ROOT:   MotorDesign 仓库根目录（用于拼接上面两项，仅当单独
+ *                        设置 RMXPRT_WORKER_PATH/PYTHON_BIN 时作为次选拼接源）
  */
-const RMXPRT_WORKER_PATH = process.env.RMXPRT_WORKER_PATH ||
-  'D:/MotorDesign/Scripts/_rmxprt_venv_worker.py'
+const MOTORDESIGN_ROOT = process.env.MOTORDESIGN_ROOT || ''
 
-const PYTHON_BIN = process.env.PYTHON_BIN ||
-  'D:/MotorDesign/Scripts/python310_win32/python.exe'
+function resolveWorkerPath() {
+  if (process.env.RMXPRT_WORKER_PATH) return process.env.RMXPRT_WORKER_PATH
+  if (MOTORDESIGN_ROOT) {
+    return join(MOTORDESIGN_ROOT, 'Scripts', '_rmxprt_venv_worker.py')
+  }
+  return null
+}
+
+function resolvePythonBin() {
+  if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN
+  if (MOTORDESIGN_ROOT) {
+    return join(MOTORDESIGN_ROOT, 'Scripts', 'python310_win32', 'python.exe')
+  }
+  // 兜底：依赖 PATH 中的 python（跨平台）
+  return process.platform === 'win32' ? 'python' : 'python3'
+}
+
+/** 求解器缺失时抛出带修复指引的错误 */
+function assertWorkerConfigured() {
+  if (!resolveWorkerPath()) {
+    throw new Error(
+      '[L1] 未配置 RMxprt 求解器路径。请设置环境变量 RMXPRT_WORKER_PATH' +
+      '（指向 _rmxprt_venv_worker.py）或 MOTORDESIGN_ROOT（MotorDesign 仓库根目录）。'
+    )
+  }
+}
 
 /**
  * 执行 RMxprt 求解（子进程）
@@ -49,18 +82,23 @@ export async function solveRmxprt(params, paramList, timeout = 120) {
   const outputPath = join(tmpdir(), `l1_results_${taskId}.json`)
   const varMapPath = join(tmpdir(), `l1_varmap_${taskId}.json`)
 
+  // 求解器路径未配置时直接拒绝，避免 spawn 一个必然失败的进程
+  const workerPath = resolveWorkerPath()
+  if (!workerPath) {
+    try { await unlink(paramsPath) } catch {}
+    assertWorkerConfigured() // 始终抛出
+  }
+  const pythonBin = resolvePythonBin()
+
   // 写入输入文件
   await writeFile(paramsPath, JSON.stringify(params), 'utf-8')
-  
-  // 写入输入文件
-  await (await import('node:fs')).writeFile(paramsPath, JSON.stringify(params), 'utf-8')
-  
+
   // 变量映射（简化版，实际需从 Knowledge/rmxprt_variable_map.json 加载）
-  await (await import('node:fs')).writeFile(varMapPath, JSON.stringify({}), 'utf-8')
-  
+  await writeFile(varMapPath, JSON.stringify({}), 'utf-8')
+
   return new Promise((resolve, reject) => {
-    const child = spawn(PYTHON_BIN, [
-      RMXPRT_WORKER_PATH,
+    const child = spawn(pythonBin, [
+      workerPath,
       '--params', paramsPath,
       '--output', outputPath,
       '--var-map', varMapPath,

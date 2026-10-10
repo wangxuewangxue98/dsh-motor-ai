@@ -18,7 +18,7 @@ import {
   normalizeLevel,
   isLevelEnabled,
   tierOf,
-} from '@yourscope/dsh-motor-ai-core'
+} from '@wangxue98/dsh-motor-ai-core'
 import { registerL0Tools, L0_TOOL_NAMES } from './tools/l0/index.mjs'
 
 // L1/L2 占位工具注册器（后续实现）

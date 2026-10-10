@@ -13,7 +13,9 @@
  *   - COM STA 线程模型（所有调用在同一线程）
  */
 
-import { resolveMotorType } from '@yourscope/dsh-motor-ai-core'
+import { resolveMotorType } from '@wangxue98/dsh-motor-ai-core'
+import { existsSync } from 'node:fs'
+import { join as joinPath } from 'node:path'
 
 /** L2 工具名列表 */
 export const L2_TOOL_NAMES = [
@@ -23,7 +25,8 @@ export const L2_TOOL_NAMES = [
 
 /**
  * Motor-CAD COM 连接管理器（简化版）
- * 实际实现需引用 D:/MotorDesign/motorcad_auto/connector.py
+ * 实际实现需集成 MotorDesign 仓库的 `motorcad_auto/connector.py`
+ * （可用环境变量 MOTORDESIGN_ROOT 指向该仓库根目录）。
  */
 class MotorCADSession {
   constructor() {
@@ -162,10 +165,17 @@ export async function registerMotorCADVerify(ctx, config = {}) {
     async execute(params) {
       const { design, template } = params
       
-      // 检查前置条件
-      const hasMotorCAD = process.env.MOTORCAD_PATH || 
-        require('node:fs').existsSync('D:/Program Files/Motor-CAD/Motor-CAD.exe')
-      
+      // 检查前置条件：优先 MOTORCAD_PATH，其次按系统默认安装目录探测。
+      // 不内置任何绝对路径字面量 —— ProgramFiles 由操作系统注入。
+      const programFiles = process.env.ProgramFiles ||
+        process.env['PROGRAMFILES(X86)'] || ''
+      const defaultExe = programFiles
+        ? joinPath(programFiles, 'Motor-CAD', 'Motor-CAD.exe')
+        : ''
+      const hasMotorCAD = Boolean(
+        process.env.MOTORCAD_PATH || (defaultExe && existsSync(defaultExe))
+      )
+
       if (!hasMotorCAD) {
         return {
           status: 'error',
@@ -191,7 +201,7 @@ export async function registerMotorCADVerify(ctx, config = {}) {
           level: 'l2',
           design,
           message: 'Motor-CAD COM 集成开发中，敬请期待',
-          hint: '参考 D:/MotorDesign/motorcad_auto/connector.py',
+          hint: '参考 MotorDesign 仓库 motorcad_auto/connector.py（可用 MOTORDESIGN_ROOT 指定仓库根目录）',
         }
       } catch (err) {
         return {

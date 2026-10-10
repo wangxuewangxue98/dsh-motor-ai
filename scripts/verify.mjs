@@ -73,10 +73,10 @@ try {
   }
 
   // 检查依赖
-  if (pkg.dependencies?.['@yourscope/dsh-motor-ai-core']) {
-    console.log(`✅ core 依赖: ${pkg.dependencies['@yourscope/dsh-motor-ai-core']}`)
+  if (pkg.dependencies?.['@wangxue98/dsh-motor-ai-core']) {
+    console.log(`✅ core 依赖: ${pkg.dependencies['@wangxue98/dsh-motor-ai-core']}`)
   } else {
-    console.log('❌ 缺少 @yourscope/dsh-motor-ai-core 依赖')
+    console.log('❌ 缺少 @wangxue98/dsh-motor-ai-core 依赖')
     failures++
   }
 
@@ -91,8 +91,8 @@ try {
 console.log('\n=== 导入检查 ===')
 try {
   // 尝试导入核心模块
-  const core = await import('@yourscope/dsh-motor-ai-core')
-  console.log(`✅ @yourscope/dsh-motor-ai-core 导入成功`)
+  const core = await import('@wangxue98/dsh-motor-ai-core')
+  console.log(`✅ @wangxue98/dsh-motor-ai-core 导入成功`)
   console.log(`   导出: ${Object.keys(core).slice(0, 5).join(', ')}...`)
 } catch (err) {
   console.log(`❌ core 导入失败: ${err.message}`)
