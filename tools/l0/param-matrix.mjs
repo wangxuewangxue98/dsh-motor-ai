@@ -1,0 +1,512 @@
+/**
+ * 工具 1：motor_param_matrix —— 参数矩阵生成（聚焦扫描）
+ * ===========================================================
+ * 纯逻辑基于 Scripts/physics_kernel.py:486-696 focused_scan 改写，三处刻意差异：
+ *
+ *   ┌── 差异 1：去随机化 ──────────────────────────────────────┐
+ *   │ Python 侧在 slots/turns/air_gap/peak_current 上用 random   │
+ *   │ (:587 .uniform / :595 .choice / :609 / :629 / :634)。      │
+ *   │ L0 要能被回归复现，改按「索引轮询」确定选取，同一 spec      │
+ *   │ 永远产出同一矩阵。副作用是组合更全 —— 恰好利于广筛。       │
+ *   └──────────────────────────────────────────────────────────┘
+ *   ┌── 差异 2：无型谱依赖 ────────────────────────────────────┐
+ *   │ Python 走 Knowledge/y_series_physics.json 查表。           │
+ *   │ L0 要求零外部依赖，故统一走类比模式             │
+ *   │ (empiricalBaseSize, :536-538)，把「型谱中心」交给调用方。   │
+ *   │ 调用方若想用型谱中心，传 baseDiameter/baseLength 覆盖即可。│
+ *   └──────────────────────────────────────────────────────────┘
+ *   ┌── 差异 3：规模 ──────────────────────────────────────────┐
+ *   │ Python focused_scan 目标 5-20 组；L0 是广筛层，           │
+ *   │ 目标可达 config.maxMatrixSize（默认 2000）。              │
+ *   └──────────────────────────────────────────────────────────┘
+ *
+ * 输出：每项严格含 L1_MATRIX_FIELDS(16) + _physics(8) + L0 私有(power_kw, cooling)
+ * 可断言：assertMatrixShape(row).ok === true 且 missing 为空。
+ */
+
+import {
+  idRatio, idRatioByPoles, isPmsmType, resolveMotorType, SLOT_MAP, PMSM_SLOT_MAP, baseTurns, empiricalBaseSize, rotorOd, toothWidth,
+  yokeThickness, solveYokeAndFrame, yokeThicknessForFlux, shaftDia, empiricalAirGap, fitLambdaWithinRange,
+  PMSM_DEFAULT_POLE_ARC, PMSM_DEFAULT_PM_THICK_MM,
+  DEFAULT_LINE_FREQ_HZ, DEFAULT_INSULATION_CLASS,
+  round1, round2, clamp,
+} from '@yourscope/dsh-motor-ai-core'
+import {
+  normalizeSpec, assertMatrixShape, COOLING_ALLOWED, buildHandoff,
+} from '@yourscope/dsh-motor-ai-core'
+import { computeTorque, computeD2L, computeLambda, validateLambda, deriveElectricalClosure } from '@yourscope/dsh-motor-ai-core'
+import { getUsageSink, logUsage } from '@yourscope/dsh-motor-ai-core'
+
+/** 工具入参声明（与 defineTool.parameters 保持一对一，避免两边漂移） */
+export const TOOL_PARAMS = {
+  power_kw: { type: 'number', required: true, description: '额定功率 (kW)' },
+  speed_rpm: { type: 'number', required: true, description: '额定转速 (rpm)' },
+  voltage_v: { type: 'number', description: '电压 (V)，默认 380' },
+  poles: { type: 'number', description: '极数，缺省由转速推荐' },
+  motor_type: {
+    type: 'string',
+    description:
+      '电机类型。传 PMSM/BLDC/IPM 或中文别名时，内径比按永磁生产口径 ' +
+      '0.72+0.010(p−2) 钳[0.70,0.80] 生成，更贴合 PMSM 真实几何；不传按 induction legacy 口径 ' +
+      '0.55+0.03(p−2)（与程序 focused_scan 一致，零回归）并回吐 MOTOR_TYPE_ASSUMED 提示；' +
+      'PMSM 工况必须显式传入，否则整批按异步几何计算。',
+  },
+  torque_nm: { type: 'number', description: '额定转矩 (Nm)，缺省由 9550·P/n 推算' },
+  cooling: {
+    type: 'string',
+    description: `冷却方式，默认 forced_air。合法值: ${COOLING_ALLOWED.join('/')}`,
+  },
+  stator_od_limit: { type: 'number', description: '定子外径上限 (mm)。缺省时按基准尺寸自伸缩（≈扫描空间上界×1.05，向上取整到 50mm），保证默认路径不被夹紧；显式传入（机座号 / 隔爆外壳等硬约束）则严格尊重，夹紧时会回吐 warning' },
+  base_diameter: { type: 'number', description: '基准内径中心 (mm)，覆盖经验估算' },
+  base_length: { type: 'number', description: '基准铁心长度中心 (mm)' },
+  count: { type: 'number', description: '目标方案数，默认 20' },
+  line_freq_hz: { type: 'number', description: `电源频率 (Hz)，默认 ${DEFAULT_LINE_FREQ_HZ}。同步转速 n_sync=120·f/p，60Hz 电网与 VFD 变频工况必须显式传入，否则 V16 会误判超同步` },
+  insulation_class: { type: 'string', description: `绝缘等级 B/F/H，默认 ${DEFAULT_INSULATION_CLASS}。B=80K / F=105K / H=125K 温升限值` },
+}
+
+/**
+ * 转速 → 推荐极数（ determinate 场景识别的简化版，对齐 determine_scenario 的选型直觉）
+ * @param {number} speedRpm 额定转速
+ * @param {number} [lineFreqHz=50] 电源频率 Hz。v0.2.5 新增频率感知：
+ *   10 万案例压测发现 1500rpm 存在可用率断崖（0.15% 可行），根因是本函数在
+ *   `>=1400 → 4 极` 档位把 1460~1500rpm 全给了 4 极，而 50Hz 下 4 极同步转速恰为
+ *   1500rpm ⇒ n_sync ≤ speed 被 V16 判死。改用同步转速反推档位边界。
+ *   实测：1460rpm→4极（n_sync=1500>1460 合法）；1500rpm→2极（4/6/8 极的 n_sync
+ *   分别为 1500/1000/750，均 ≤1500 即超同步，唯一合法偶极是 2 极 n_sync=3000）。
+ */
+export function recommendPoles(speedRpm, lineFreqHz = DEFAULT_LINE_FREQ_HZ) {
+  const f = Number.isFinite(lineFreqHz) && lineFreqHz > 0 ? lineFreqHz : DEFAULT_LINE_FREQ_HZ
+  // 依据 n_sync = 120·f/p > n 取档：选满足「同步转速仍高于转速」的最大偶极数
+  // ⚠ 取证纠正（v0.1.7）：>12000rpm 归入「1 极档」是物理错误 —— 永磁同步机不存在 1 极。
+  //   反推校验（现场工况）：200kW/22000rpm，取 2 极时 f = 22000×2/120 = 366.7Hz，
+  //   与记录的「f≈367Hz」完全吻合 ⇒ 高速工况应归入 2 极，真正的约束是频率而非极数下限。
+  if (speedRpm >= 2500) return 2
+  // 中低速段：按各极数档的同步转速上界划分。
+  // 容差取 -1e-6：V16 在 n_sync ≤ speed 时判 failed（含恰好相等的同步点），
+  // 故当 speed 触及 n_sync(p) 时必须穿透到更小极数档，绝不能把「n_sync == speed」当合法。
+  if (speedRpm >= (120 * f) / 4 - 1e-6) return 2          // 触及 4 极 n_sync ⇒ 退到 2 极
+  if (speedRpm >= (120 * f) / 6 - 1e-6) return 4          // 触及 6 极 n_sync ⇒ 退到 4 极
+  if (speedRpm >= (120 * f) / 8 - 1e-6) return 6          // 触及 8 极 n_sync ⇒ 退到 6 极
+  return 8
+}
+
+/** 候选极数：主极数 ± 2 档（physics_kernel.py:553-557） */
+export function poleCandidates(poles) {
+  const list = [poles]
+  if (poles > 2) list.push(poles - 2)
+  if (poles < 8) list.push(poles + 2)
+  return list.filter((p) => p >= 1)
+}
+
+/** 等距取点（对齐 physics_kernel.py:_linspace 的用法） */
+function linspace(lo, hi, n) {
+  const count = Math.max(1, n)
+  if (count === 1) return [round1((lo + hi) / 2)]
+  const step = (hi - lo) / (count - 1)
+  return Array.from({ length: count }, (_, i) => round1(lo + step * i))
+}
+
+/**
+ * 生成参数扫描矩阵（纯函数，零依赖，可单测）
+ * @param {object} rawSpec 工具入参（支持别名）
+ * @param {object} [config] 插件配置：{ maxMatrixSize, topNPreview }
+ * @returns {{matrix: object[], total: number, returned: number, truncated: boolean, spec: object, applied: string[]}}
+ */
+/**
+ * 外径上限默认值：跟随本插件自身的基准尺寸自伸缩（v0.2.4）
+ *
+ * 外径是自下而上推出来的（内径 d ÷ 内外径比），不是查表来的，
+ * 所以上限也必须由同一套基准推出来，否则就会像写死的 450mm 那样
+ * 在大机座上把整批候选夹死。
+ *
+ * 取值：扫描空间自身上界（最大内径 ÷ 最小内外径比）× 1.05 余量，向上取整到 50mm。
+ * ⇒ 默认路径恒不夹紧；用户显式传值则完全不参与计算。
+ *
+ * @param {number} baseD 基准内径 (mm)
+ * @param {number} scanRange 扫描半幅（如 0.15）
+ * @param {number[]} poleList 极数候选
+ * @param {(pole:number)=>number} ratioOf 内外径比函数
+ * @returns {number} 建议外径上限 (mm)
+ */
+export function defaultOdLimit(baseD, scanRange, poleList, ratioOf) {
+  let need = 0
+  for (const pole of poleList) {
+    const od = (baseD * (1 + scanRange)) / ratioOf(pole)
+    if (!Number.isFinite(od) || od <= 0) continue
+    // v0.2.5 P0：扫描空间之外还需为「按磁密反解的轭厚」留出机座增量。
+    //   旧口径只按扫描空间×1.05 取限，于是 P0 放大出的轭厚必然撞上默认上限，
+    //   被夹回小轭 ⇒ 默认配置下 P0 等于没生效（显式给大上限才看得到修复）。
+    //   故上限必须把 yokeGrowth 计入，否则「默认」与「显式」会给出不同的几何。
+    const dEff = od * ratioOf(pole)
+    const yokeReq = yokeThicknessForFlux({ statorId: dEff, poles: pole })
+    const slotDepth = (od - dEff) / 2 * 0.60
+    const yokeRatio = (od - dEff) / 2 * 0.40
+    const yoke = Math.max(yokeRatio, Number.isFinite(yokeReq) ? yokeReq : 0)
+    const odWithYoke = dEff + 2 * (slotDepth + yoke)
+    if (odWithYoke > need) need = odWithYoke
+  }
+  if (!Number.isFinite(need) || need <= 0) return 450 // 兜底：退化输入沿用旧值
+  return Math.ceil((need * 1.05) / 50) * 50
+}
+
+export function buildParamMatrix(rawSpec, config = {}) {
+  const { spec, applied } = normalizeSpec(rawSpec)
+  const maxMatrixSize = config.maxMatrixSize ?? 2000
+
+  const powerKw = Number(spec.power_kw)
+  const speedRpm = Number(spec.speed_rpm)
+  if (!Number.isFinite(powerKw) || powerKw <= 0) {
+    throw new Error('[motor_param_matrix] power_kw 必须为正数')
+  }
+  if (!Number.isFinite(speedRpm) || speedRpm <= 0) {
+    throw new Error('[motor_param_matrix] speed_rpm 必须为正数')
+  }
+
+  const voltage = spec.voltage_v ?? 380
+  // v0.2.5：电源频率参与极数推荐（recommendPoles 频率感知）与 V16 判据
+  const lineFreqHz = Number.isFinite(Number(spec.line_freq_hz))
+    ? Number(spec.line_freq_hz) : (config.line_freq_hz ?? DEFAULT_LINE_FREQ_HZ)
+  // v0.2.5：绝缘等级必须逐行透传，否则下游按 F 级 105K 判，B 级(80K)用户拿到不合规方案
+  const insulationClass = String(spec.insulation_class ?? config.insulationClass ?? DEFAULT_INSULATION_CLASS).toUpperCase()
+  const poles = spec.poles ?? recommendPoles(speedRpm, lineFreqHz)
+  const torqueNm = spec.torque_nm ?? computeTorque(powerKw, speedRpm)
+  const cooling = COOLING_ALLOWED.includes(spec.cooling) ? spec.cooling : 'forced_air'
+  // 外径上限见下方 dSteps/lSteps 之后 —— 默认值需依赖基准尺寸与极数表，无法在此定出
+  const count = Math.min(maxMatrixSize, Math.max(1, Math.floor(spec.count ?? 20)))
+
+  // ---- PMSM 口径开关（P0，0.1.4）----
+  // 缺省 → legacy 口径 idRatio(pole)=0.55+0.03(p−2)，与 0.1.3 / 程序 focused_scan 逐字节一致（零回归）；
+  // 显式传 PMSM/BLDC/IPM（含中文别名）→ is_pm 生产口径 0.72+0.010(p−2) 钳[0.70,0.80]，更贴合 PMSM 真实几何。
+  const motorType = spec.motor_type ?? spec.motorType
+  const usePm = isPmsmType(motorType)
+  // 0.2.6 P0：类型规范化（别名归一 + 缺省显式判 induction 并标记），
+  // 行对象无条件携带 motor_type，消除「生成按异步、推理按 OD 误判 pmsm」的口径分裂。
+  const motorResolved = resolveMotorType(motorType)
+  const ratioOf = (pole) => (usePm ? idRatioByPoles(pole, { isPm: true }) : idRatio(pole))
+
+  // ---- 基准尺寸中心（类比模式）----
+  const fallback = empiricalBaseSize(torqueNm)
+  const baseD = round1(spec.base_diameter ?? fallback.d)
+  const baseL = round1(spec.base_length ?? fallback.l)
+  const scanRange = 0.15
+
+  // ---- 扫描网格规模：保证够 count 又不至于暴量 ----
+  const poleList = poleCandidates(poles)
+  const perPole = Math.max(1, Math.ceil(count / poleList.length))
+  const axis = Math.max(2, Math.ceil(Math.sqrt(perPole)))
+
+  const dSteps = linspace(baseD * (1 - scanRange), baseD * (1 + scanRange), axis)
+  const lSteps = linspace(baseL * (1 - scanRange), baseL * (1 + scanRange), axis)
+
+  // ---- 外径上限（v0.2.4：默认值自伸缩，不再写死 450）----
+  // 旧默认 450mm 与功率完全脱钩，而 OD 是自下而上由基准尺寸推出来的：
+  //   450kW/690V 需要 OD≈703mm，整批被夹到 450 → 槽面积骤减 → V15 槽满率全灭，
+  //   表现为「物理不可行」，实为参数夹紧；75kW 需 OD≈610mm，被夹 65% 却仍剩可行解，
+  //   Top1 极数被从 4 极压成 6 极，异常被静默吞掉。
+  // 新默认值 = 扫描空间自身上界 ×1.05 向上取整到 50mm ⇒ 默认路径永不夹紧。
+  // 显式传入（机座号 / 隔爆外壳）严格尊重，并在夹紧时回吐 warning。
+  const odLimitExplicit = Number.isFinite(Number(spec.stator_od_limit)) && spec.stator_od_limit != null
+    ? Number(spec.stator_od_limit)
+    : null
+  const odLimitNeeded = defaultOdLimit(baseD, scanRange, poleList, ratioOf)
+  const odLimit = odLimitExplicit ?? odLimitNeeded
+
+  const matrix = []
+  const seenKeys = new Set()
+  let comboIndex = 0
+
+  outer:
+  for (const d of dSteps) {
+    for (const l of lSteps) {
+      for (const pole of poleList) {
+        const key = `${Math.round(d)}|${Math.round(l)}|${pole}`
+        if (seenKeys.has(key)) continue
+        seenKeys.add(key)
+
+        // 外径超限：不丢弃候选，而是把外径夹到上限并反算内径 ——
+        // 用户既然给了外径限制，就必须在限制内给出可行方案；
+        // 直接 continue 会在「D²L 基准尺寸偏大 + 限制偏紧」时产出空矩阵。
+        let od = Math.round(d / ratioOf(pole))
+        let dEff = d
+        let odClamped = false
+        if (od > odLimit) {
+          od = Math.round(odLimit)
+          dEff = round1(od * ratioOf(pole))
+          odClamped = true
+        }
+
+// ---- 轭厚/机座求解（v0.2.5 改进 P0）----
+      // 原比例式 yoke = half×0.40 无磁密约束，高速大 Dsi 下必然 V08 判饱和。
+      // 此处按 By≤B_YOKE_WARN_T 反解所需轭厚，取较大者；轭厚被放大时同步外扩 OD，
+      // 并保留 grown 标记写入 _physics 以便追溯（OD 不再等于用户请求值时必须可查）。
+      const frame = solveYokeAndFrame({ statorOd: od, statorId: dEff, poles: pole })
+      // ⚠ stator_od 在 param-schema 中声明为 integer（assertMatrixShape 强校验），
+      //   故外扩结果必须取整，否则整批矩阵因形状异常被拒。
+      let odFinal = frame.grown ? Math.round(frame.stator_od) : od
+      let yokeThk = frame.yoke_thickness
+      let yokeLimitedByOdCap = false
+
+      // ⚠ 硬上限优先于磁密需求：用户显式/自动给的 stator_od_limit 是**约束**，
+      //   磁密需求只是**目标**。若为满足 By 而突破上限，等于用「目标」覆盖「约束」，
+      //   会让所有超限行静默变成 OD>limit 的非法行（实测打破 verify 的两条上限门禁）。
+      //   正确做法：夹回上限内，并按上限内可用的最大轭厚分配，
+      //   若仍不满足磁密需求，则**保留该行的不足**，交由 V08 如实判失败 ——
+      //   「上限内放不下足够的轭」是有价值的工程结论，不能靠偷扩上限掩盖。
+      if (odFinal > odLimit) {
+        yokeLimitedByOdCap = true
+        odFinal = Math.round(odLimit)
+        const halfCap = Math.max(1, (odFinal - dEff) / 2)
+        // 上限内的可用轭厚：按原比例 0.40/0.60 拆分环带，保持槽深/轭厚比例不变
+        yokeThk = round1(halfCap * 0.40)
+        const slotDepthCap = round1(halfCap * 0.60)
+        // 槽深并入槽形（row 里 air_gap/slot 由下游按 OD−Dsi 推，无需单独登记）
+        void slotDepthCap
+      }
+
+        const airGap = empiricalAirGap(odFinal)
+        const rOd = rotorOd(dEff, airGap)
+
+        // 确定性槽配合轮询：不再 random.choice
+        // PMSM（v0.1.6 修复）：转子无笼型槽 → slots_rotor=0，定子槽取 PMSM_SLOT_MAP；
+        // 异步/缺省 → 沿用 SLOT_MAP 的 [定子,转子] 二元组（零回归）。
+        const isPm = usePm
+        const statorSlotCandidates = isPm
+          ? (PMSM_SLOT_MAP[pole] ?? PMSM_SLOT_MAP[8])
+          : (SLOT_MAP[pole] ?? SLOT_MAP[8]).map((pair) => pair[0])
+        const slotsStator = statorSlotCandidates[comboIndex % statorSlotCandidates.length]
+        const slotsRotor = isPm ? 0 : (SLOT_MAP[pole] ?? SLOT_MAP[8])[comboIndex % (SLOT_MAP[pole] ?? SLOT_MAP[8]).length][1]
+        const parallels = [1, 2]
+
+        const coreLength = fitLambdaWithinRange(dEff, l, pole)
+        const lamCheck = validateLambda(coreLength, dEff, pole)
+        const d2l = computeD2L(dEff, coreLength)
+        const baseD2l = computeD2L(baseD, baseL)
+        const estTorque = baseD2l > 0 ? round2((torqueNm * d2l) / baseD2l) : torqueNm
+
+        // ---- 电气闭环（v0.1.6 核心修复）----
+        // 由电压/转速/极数/几何反推自洽的 peak_current 与 turns_per_coil，
+        // 彻底取代原 baseTurns(voltage,od) 经验式与 [50,80,100] 固定电流表。
+        // 未传 motor_type 时仍按 legacy 几何，但电流/匝数一律走闭环（零回归安全：
+        // 旧路径本就未对 N/I 做物理约束，新路径只会让它们更可信）。
+        const closure = deriveElectricalClosure({
+          voltage, speed: speedRpm, poles: pole,
+          statorId: round1(dEff), coreLength, airGap,
+          slotsStator, parallelCircuits: parallels[comboIndex % parallels.length],
+          powerKw,
+        })
+        const turnsPerCoil = closure?.turns_per_coil ?? Math.max(6, baseTurns(voltage, od))
+        const peakCurrent = closure?.peak_current ?? 80
+
+        matrix.push({
+          stator_od: odFinal,
+          stator_id: round1(dEff),
+          rotor_od: rOd,
+          core_length: coreLength,
+          air_gap: airGap,
+          tooth_width: toothWidth(dEff, slotsStator),
+          yoke_thickness: yokeThk,
+          shaft_dia: shaftDia(rOd),
+          poles: pole,
+          voltage,
+          peak_current: peakCurrent,
+          speed: speedRpm,
+          slots_stator: slotsStator,
+          slots_rotor: slotsRotor,
+          turns_per_coil: turnsPerCoil,
+          parallel_circuits: parallels[comboIndex % parallels.length],
+          // ---- L0 私有（不进交接载荷，由 pickL1Payload 过滤）----
+          power_kw: powerKw,
+          torque_nm: torqueNm,
+          cooling,
+          // v0.2.5：频率与绝缘等级必须随行下发。
+          // line_freq_hz → V16/V18 判据；insulation_class → 温升限值（B=80K/F=105K/H=125K）。
+          // 二者此前均未逐行携带，导致 V16 恒按 50Hz、B 级用户按 F 级考核。
+          line_freq_hz: lineFreqHz,
+          insulation_class: insulationClass,
+          // 0.2.6 P0：motor_type 无条件随行下发（规范化后的 canonical 值）。
+          // 此前缺省不产生该键 → 代理通道 detectMotorType 落入 OD 启发式，
+          // od<400 静默误判 pmsm，中小型异步机 skipped 19.8%（10 万案例压测定位）。
+          motor_type: motorResolved.type,
+          // ---- 物理核验 ----
+          _physics: {
+            d_squared_l: d2l,
+            lambda: computeLambda(coreLength, dEff),
+            lambda_valid: lamCheck.valid,
+            lambda_advice: lamCheck.advice,
+            od_clamped: odClamped,
+            // v0.2.5 P0：轭厚按磁密反解后放大机座的追溯信息
+            yoke_thickness: yokeThk,
+            yoke_by_ratio: frame.yoke_by_ratio,
+            yoke_by_flux: frame.yoke_by_flux,
+            od_grown_for_yoke: frame.grown && !yokeLimitedByOdCap,
+            yoke_limited_by_od_cap: yokeLimitedByOdCap,
+            yoke_required_for_flux: frame.yoke_by_flux,
+            ...(frame.grown || yokeLimitedByOdCap
+              ? { stator_od_requested: od, stator_od_after_growth: odFinal }
+              : {}),
+            estimated_torque: estTorque,
+            ref_model: 'L0-类比估算',
+            scenario: 'analogy',
+            target_torque: torqueNm,
+            // ---- v0.2.5 转矩口径契约（P0）----
+            // 10 万案例压测把 estimated_torque 当"承诺满足用户转矩的输出"断言，
+            // 报出 91.4% 守恒失效。复核结论：两者本就是不同物理量——
+            //   target_torque  = 9550·P/n  = 用户规格（硬约束）
+            //   estimated_torque = target·(D²L/D²L_base) = 按几何类比外推的可达转矩
+            // 同一几何下二者必然不同（差 D²L 比例），不是计算错误，而是口径未标注。
+            // 但该字段进了交接白名单（param-schema L1_DIAG_FIELDS），下游若当规格用即静默违约，
+            // 故显式给出 basis 标记与偏差，让消费方无法误用。
+            torque_basis: 'analogy_d2l',
+            torque_is_spec: false,
+            torque_ratio_estimated_over_target: baseD2l > 0 ? round2(d2l / baseD2l) : 1,
+            // v0.1.6：电气闭环派生量 + PMSM 几何种子（项目基准 极弧0.688 / PM厚12mm）
+            electrical_frequency_hz: closure?.freq_hz ?? round1((speedRpm * pole) / 120),
+            back_emf_v: closure?.back_emf_v ?? null,
+            back_emf_ok: closure?.back_emf_ok ?? null,
+            line_current_rms: closure?.line_current_rms ?? null,
+            ...(isPm ? {
+              rotor_type: 'pm_synchronous_no_cage',
+              pole_arc_ratio: PMSM_DEFAULT_POLE_ARC,
+              pm_thickness_mm: PMSM_DEFAULT_PM_THICK_MM,
+            } : {}),
+          },
+        })
+
+        comboIndex += 1
+        if (matrix.length >= count) break outer
+      }
+    }
+  }
+
+  // ---- 按 D²L 与目标转矩的匹配度排序（physics_kernel.py:689-694）----
+  const targetD2l = computeD2L(baseD, baseL)
+  if (targetD2l > 0) {
+    matrix.sort((a, b) =>
+      Math.abs(a._physics.d_squared_l - targetD2l) -
+      Math.abs(b._physics.d_squared_l - targetD2l))
+  }
+
+  // truncated 必须拿「原始请求量」比，不能拿被 maxMatrixSize 夹断后的 count 比 ——
+  // 后者恒为 false，会掩盖真实截断。
+  const returned = matrix.slice(0, maxMatrixSize)
+  const truncated = Math.max(1, Math.floor(spec.count ?? 20)) > returned.length
+
+  // ---- 形状自检：任何一行缺 L1 严格必填都视为内部错误 ----
+  for (const row of returned) {
+    const shape = assertMatrixShape(row)
+    if (!shape.ok) {
+      throw new Error(
+        `[motor_param_matrix] 矩阵行形状异常: missing=${shape.missing.join(',')} typeErrors=${shape.typeErrors.join(';')}`
+      )
+    }
+  }
+
+  // ---- 夹紧告警（v0.2.4）----
+  // 夹紧本身不报错：用户给的硬约束必须在限制内给出方案；但「夹紧了多少、本该多大」
+  // 必须让调用方看见 —— 否则会像 450kW 那样把参数夹紧误读成物理不可行。
+  const clampedRows = returned.filter((r) => r._physics?.od_clamped).length
+  const warnings = []
+  const odLimitMeta = {
+    value: odLimit,
+    source: odLimitExplicit != null ? 'user' : 'auto',
+    scan_space_max_od: round1(odLimitNeeded / 1.05),
+    suggested: odLimitNeeded,
+  }
+  if (clampedRows > 0) {
+    warnings.push({
+      code: 'OD_LIMIT_CLAMPED',
+      level: 'warning',
+      clamped_rows: clampedRows,
+      total_rows: returned.length,
+      od_limit: odLimit,
+      needed_od: odLimitMeta.scan_space_max_od,
+      suggested_od_limit: odLimitNeeded,
+      message:
+        `${clampedRows}/${returned.length} 行的定子外径被 stator_od_limit=${odLimit}mm 夹紧` +
+        `（扫描空间最大需 ${odLimitMeta.scan_space_max_od}mm）。` +
+        `夹紧会压缩槽面积，可能触发 V15 槽满率批量判废、并把最优解的极数压错，` +
+        `使本可行的机座表现为「0 可行」。建议放开 stator_od_limit 至 ${odLimitNeeded}mm，` +
+        `或省略该参数走默认自伸缩上限。`,
+    })
+  }
+
+  // 0.2.6 P0：motor_type 缺省/无法识别必须显式告警 —— 静默按 induction 处理会
+  // 让 PMSM 用户拿到异步几何而无从察觉（10 万案例压测：79.5% 行 motor_type 缺失）。
+  if (motorResolved.assumed || motorResolved.unrecognized) {
+    warnings.push({
+      code: 'MOTOR_TYPE_ASSUMED',
+      level: motorResolved.unrecognized ? 'warning' : 'info',
+      input: motorType ?? null,
+      resolved_as: 'induction',
+      message: motorResolved.unrecognized
+        ? `motor_type='${motorType}' 无法识别（合法别名见 SKILL），已按 induction（异步）口径生成。` +
+          `若目标是永磁机（PMSM/BLDC/IPM），结果几何与磁路均为异步口径，请显式传 motor_type:'pmsm' 重算。`
+        : `未提供 motor_type，已按 induction（异步）legacy 口径生成 —— 这是该工具的默认口径，` +
+          `与代理/校验通道一致。PMSM 必须显式传 motor_type:'pmsm'，否则整批按异步几何计算。`,
+    })
+  }
+
+  return {
+    warnings,
+    od_limit: odLimitMeta,
+    matrix: returned,
+    total: matrix.length,
+    returned: returned.length,
+    truncated,
+    spec: {
+      power_kw: powerKw, speed_rpm: speedRpm, voltage_v: voltage, poles,
+      motor_type: motorResolved.type,
+      motor_type_assumed: motorResolved.assumed,
+      motor_type_input: motorType ?? undefined,
+      torque_nm: torqueNm, cooling, count,
+      line_freq_hz: lineFreqHz, insulation_class: insulationClass,
+    },
+    applied,
+  }
+}
+
+/**
+ * 工具注册（薄封装）
+ * 动态 import '@deepseek-ai/dsh-tools' 而非顶层 import：
+ * 保证本文件可在无 DSH Runtime 的环境下被 node 直接加载做单测。
+ * @param {import('@deepseek-ai/cordis').Context} ctx
+ * @param {object} config
+ */
+export async function registerParamMatrix(ctx, config = {}) {
+  const { defineTool } = await import('@deepseek-ai/dsh-tools')
+
+  ctx.tools.register(defineTool({
+    name: 'motor_param_matrix',
+    description:
+      '根据设计需求规格生成电机参数扫描矩阵（聚焦扫描）——电机设计流水线的第一步。\n' +
+      '输入额定功率、转速、电压等规格，输出可直接喂给 L1 求解器的参数组合列表。\n' +
+      '每个组合严格包含 L1 所需的 16 个顶层字段与 _physics 物理核验字段。\n' +
+      '产出可直接作为 params_list 传给 motor_design_validate（先校验剔除 failed）\n' +
+      '和 motor_l0_estimate（再估算排序），三者构成标准流水线。\n' +
+      '本工具为纯本地计算，毫秒级返回，不调用任何外部求解器。',
+    parameters: TOOL_PARAMS,
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args) {
+      const t0 = Date.now()
+      try {
+        const result = buildParamMatrix(args, config)
+        logUsage(getUsageSink(config), {
+          tool: 'motor_param_matrix', ok: true, elapsed_ms: Date.now() - t0,
+          n: result?.total ?? result?.matrix?.length ?? 0,
+        })
+        return JSON.stringify(result, null, 2)
+      } catch (err) {
+        logUsage(getUsageSink(config), {
+          tool: 'motor_param_matrix', ok: false, elapsed_ms: Date.now() - t0,
+          error: String(err?.message ?? err),
+        })
+        return JSON.stringify({ error: true, message: String(err?.message ?? err) }, null, 2)
+      }
+    },
+  }))
+}
+
+export default { buildParamMatrix, registerParamMatrix, TOOL_PARAMS, recommendPoles, poleCandidates, defaultOdLimit }

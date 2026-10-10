@@ -1,0 +1,56 @@
+{
+  "name": "dsh-motor-ai",
+  "version": "1.0.0-alpha",
+  "description": "电机设计 L1/L2 完整版（RMxprt + Motor-CAD），需安装 dsh-motor-ai-l0 的共享核心",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./lib/*": "./lib/*.mjs"
+  },
+  "scripts": {
+    "verify": "node scripts/verify.mjs",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPattern=tests",
+    "test:unit": "node --experimental-vm-modules node_modules/jest/bin/jest.js --testPathPattern=tests/unit"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.1.2 <0.2.0"
+  },
+  "dependencies": {
+    "@yourscope/dsh-motor-ai-core": "^1.0.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^0.1.17",
+    "@deepseek-ai/dsh-tools": "^0.1.7",
+    "jest": "^29.7.0"
+  },
+  "keywords": [
+    "deepseek",
+    "dsh",
+    "plugin",
+    "motor",
+    "design",
+    "l1",
+    "l2",
+    "rmxprt",
+    "motor-cad"
+  ],
+  "author": "Motor-AI Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/dsh-motor-ai"
+  },
+  "files": [
+    "index.mjs",
+    "lib/",
+    "tools/",
+    "models/",
+    "scripts/",
+    "skills/",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
