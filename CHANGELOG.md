@@ -1,5 +1,23 @@
 # 变更日志
 
+## [1.0.0-rc.3] - 2026-10-11 — 支持在 DSH 界面直接安装（补「组合包」声明）
+
+### 修复
+- **补 `dsh.bundle.patch` 组合包声明**：此前 `dsh-motor-ai` 的 `package.json` 没有 `dsh` 字段，
+  DSH Desktop「添加和管理插件」会判为 `not-bundle`，报
+  `installProblemNotBundle`（"这个包没有声明组合包，无法作为插件安装"），
+  导致**无法在 DSH 界面一键安装**（只能绕过 UI 手工注入 generation）。
+  - 新增 `cordis.patch.yml`（插件自带默认配置：`level: 'l2'`、`l1Enabled`/`l2Enabled: true`、
+    `activationPublicKeyPem` 占位、L0 运行参数、遥测默认全关）
+  - `package.json` 增 `dsh.bundle.patch` + `dsh.compatibility`（`dsh >=0.1.2 <0.2.0`、`node >=22`）
+  - `exports` 暴露 `./cordis.patch.yml` 与 `./package.json`；`files` 白名单纳入 `cordis.patch.yml`
+
+### 安装方式（DSH 界面直装，不走市场）
+DSH Desktop →「添加和管理插件」→ 输入框填 **`dsh-motor-ai@1.0.0-rc.3`** → 安装。
+- **必须带 `@版本`**：安装器用 `spec.lastIndexOf('@')` 切分包名与版本，纯包名会把版本算错。
+- 也可填 GitHub 仓库地址（需仓库真实存在）或本地目录路径。
+- full 与 `dsh-motor-ai-l0` 互斥，安装前请先卸载 l0。
+
 ## [1.0.0-rc.2] - 2026-10-10 — L1/L2 惰性门禁落地（激活码只锁 L1/L2，L0 永不锁）
 
 ### 变更（架构原则）

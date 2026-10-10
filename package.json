@@ -1,12 +1,23 @@
 {
   "name": "dsh-motor-ai",
-  "version": "1.0.0-rc.2",
-  "description": "电机设计 L1/L2 完整版（RMxprt + Motor-CAD），需安装 dsh-motor-ai-l0 的共享核心",
+  "version": "1.0.0-rc.3",
+  "description": "电机设计 L1/L2 完整版（RMxprt + Motor-CAD），依赖共享核心 @wangxue98/dsh-motor-ai-core",
   "type": "module",
-  "main": "index.mjs",
+  "main": "./index.mjs",
   "exports": {
     ".": "./index.mjs",
-    "./lib/*": "./lib/*.mjs"
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./lib/*": "./lib/*.mjs",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "compatibility": {
+      "dsh": ">=0.1.2 <0.2.0",
+      "node": ">=22.0.0"
+    }
   },
   "scripts": {
     "verify": "node scripts/verify.mjs",
@@ -51,6 +62,7 @@
   "homepage": "https://github.com/wangxuewangxue98/dsh-motor-ai#readme",
   "files": [
     "index.mjs",
+    "cordis.patch.yml",
     "lib/",
     "tools/",
     "models/",
@@ -62,6 +74,6 @@
     "package.json"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   }
 }

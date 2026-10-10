@@ -185,6 +185,47 @@ try {
   console.log(`⚠️  进包门禁跳过（pack 失败）：${e.message}`)
 }
 
+// 门禁 C：DSH「组合包」声明完整性（防 not-bundle 类缺陷回归）
+// 事故样本：dsh-motor-ai@1.0.0-rc.2 的 package.json 无 dsh.bundle，
+// DSH Desktop 插件管理器判为 not-bundle ⇒ "这个包没有声明组合包，无法作为插件安装"，
+// 界面完全装不上（只能绕过 UI 手工注入 generation）。
+{
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+  const cBad = []
+  const files = Array.isArray(pkg.files) ? pkg.files : []
+
+  const patch = pkg.dsh && pkg.dsh.bundle && pkg.dsh.bundle.patch
+  if (typeof patch !== 'string' || patch.trim() === '') {
+    cBad.push('package.json 缺 dsh.bundle.patch（DSH 判为 not-bundle，界面装不上）')
+  } else {
+    const patchRel = patch.replace(/^\.\//, '')
+    if (!existsSync(join(ROOT, patchRel))) {
+      cBad.push(`dsh.bundle.patch 指向的文件不存在：${patch}`)
+    }
+    const covered = files.some((f) => {
+      const norm = f.replace(/^\.\//, '').replace(/\/$/, '')
+      return norm === patchRel || patchRel.startsWith(norm + '/')
+    })
+    if (!covered) cBad.push(`dsh.bundle.patch 不在 files 白名单内（不会进包）：${patch}`)
+    if (!(pkg.exports && pkg.exports['./' + patchRel])) {
+      cBad.push(`exports 未暴露 ./${patchRel}（Cordis 解析可能失败）`)
+    }
+  }
+
+  const compat = pkg.dsh && pkg.dsh.compatibility
+  if (!compat || typeof compat.dsh !== 'string') {
+    cBad.push('package.json 缺 dsh.compatibility.dsh')
+  } else if (pkg.peerDependencies && pkg.peerDependencies['@deepseek-ai/dsh'] !== compat.dsh) {
+    cBad.push(`dsh.compatibility.dsh(${compat.dsh}) 与 peerDependencies(@deepseek-ai/dsh=${pkg.peerDependencies['@deepseek-ai/dsh']}) 不一致`)
+  }
+
+  if (cBad.length === 0) {
+    console.log(`✅ 组合包声明完整：patch=${patch} / compat=${compat.dsh}`)
+  } else {
+    console.log(`❌ 组合包声明缺陷 ${cBad.length} 项：`); cBad.forEach((l) => console.log('   ' + l)); failures++
+  }
+}
+
 // ============================================================
 // 5. 汇总
 // ============================================================

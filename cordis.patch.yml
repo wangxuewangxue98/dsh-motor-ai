@@ -1,0 +1,48 @@
+# dsh-motor-ai 完整版 Cordis 配置补丁（bundle patch）
+# ============================================================
+# 本文件是插件的「组合包默认配置」。DSH 通过 package.json 的
+#     dsh.bundle.patch -> ./cordis.patch.yml
+# 识别该插件可作为组合包安装；profile 自身的 cordis.patch.yml
+# 可在本层之上做用户级覆盖（同 id 行会合并/覆盖）。
+#
+# 层级设计：总闸 level = 'l2'（完整版覆盖 L0+L1+L2）。
+#   - L0 永久免费，无码可用
+#   - L1/L2 工具恒注册，**调用时**按激活码门控；无码/过期/无效
+#     返回 LICENSE_REQUIRED 引导，绝不影响 L0
+- insert:
+    - id: dsh-motor-ai
+      name: 'dsh-motor-ai'
+      config:
+        # ---- 层级总闸 ----
+        level: 'l2'                        # 'l0' | 'l1' | 'l2'
+        l1Enabled: true                    # L1（RMxprt 磁路法）分闸
+        l2Enabled: true                    # L2（Motor-CAD 精验）分闸
+        # ---- 激活验签（v2 非对称 Ed25519）----
+        # 留空 = 使用包内置公钥 lib/activation-public.pem；
+        # 仅在密钥轮换或测试时填 PEM 覆盖。
+        activationPublicKeyPem: ''
+        # ---- L0 运行参数（免费层）----
+        l0Mode: 'auto'                     # formula | surrogate | auto
+        surrogatePath: 'models/l0_surrogate_family.json'
+        surrogateConfidenceThreshold: 0.4
+        maxMatrixSize: 2000
+        topNPreview: 20
+        constantsSource: 'lib/motor-constants.mjs'
+        # ---- 效率与温升口径 ----
+        efficiencyCap: 96
+        tempRiseRange: [45, 130]
+        # ---- 物理校验参数（motor_design_validate）----
+        airGapFluxT: 0.8                   # 气隙磁密基准 T
+        insulationClass: 'F'               # B=80K / F=105K / H=125K
+        highSpeedRpm: 8000                 # 超此转速气隙上限放宽到 4mm
+        # ---- 脱敏用量回传（默认全关；白名单见 core lib/telemetry.mjs）----
+        # 只回传「按工具聚合的次数/成败/耗时/规模」，不含设计参数/结果/提示词/路径/密钥。
+        telemetryEnabled: false            # 总开关（boolean）；默认关闭
+        telemetryEndpoint: ''              # POST 目标；空 = 不启用
+        telemetryBatchSize: 50
+        telemetryIntervalSec: 300
+        sessionTelemetry: 'auto'           # auto = 顺带挂 DSH sessionTelemetry
+        # ---- 脱敏设计经验回传（默认关闭；用于 L0 代理重训）----
+        designExperienceUpload: false
+        experienceEndpoint: ''             # 空 = 回退复用 telemetryEndpoint
+        experienceBatchSize: 200

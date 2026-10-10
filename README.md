@@ -12,27 +12,45 @@ dsh-motor-ai-core      ← 共享核心（公式引擎、代理模型、经验�
 
 ## 安装
 
+**方式一：DSH 界面直装（不走市场）**
+
+DSH Desktop →「添加和管理插件」→ 输入框填：
+
+```
+dsh-motor-ai@1.0.0-rc.3
+```
+
+> - **必须带 `@版本`**：安装器用 `spec.lastIndexOf('@')` 切分包名与版本，纯包名会把版本算错。
+> - 也可填 GitHub 仓库地址（需仓库真实存在）或本地目录路径。
+> - full 与 `dsh-motor-ai-l0` **互斥**，安装前请先在「已安装」里卸载 l0。
+> - 本插件自带组合包配置（`package.json` 的 `dsh.bundle.patch` → `./cordis.patch.yml`），
+>   这是 DSH 界面能识别并安装它的前提。
+
+**方式二：命令行**
+
 ```bash
 # 完整版（需先卸载免费版，两者互斥）
 npm uninstall dsh-motor-ai-l0
-npm install dsh-motor-ai
+npm install dsh-motor-ai@next
 ```
 
-> **当前版本口径**：`latest` = `1.0.0-beta`；本版 `1.0.0-rc.2` 为预发布，走 `next` 标签。
-> 安装本版请用 `npm install dsh-motor-ai@next`（DSH profile 内对应 `pnpm add dsh-motor-ai@next`）。
+> **当前版本口径**：`latest` = `1.0.0-beta`；`1.0.0-rc.3` 为预发布，走 `next` 标签。
 > 稳定版发布后 `@next` 可省略。
 
 ## 配置
 
-在 `cordis.patch.yml` 中：
+插件**自带**的默认配置在包内 `cordis.patch.yml`（由 `package.json` 的 `dsh.bundle.patch` 声明）。
+用户级覆盖写在 **profile 的** `cordis.patch.yml` 里，按 `id` 覆盖 `config`：
 
 ```yaml
-plugins:
-  dsh-motor-ai:
-    level: l1        # l0 / l1 / l2
+- id: dsh-motor-ai
+  config:
+    level: l2        # l0 / l1 / l2
     l1Enabled: true  # 启用 RMxprt 求解
     l2Enabled: false # Motor-CAD 暂不启用
 ```
+
+> 无论 `level` 如何设置，**L0 永久免费可用**；L1/L2 工具恒注册，**调用时**按激活码门控。
 
 ## 工具
 
