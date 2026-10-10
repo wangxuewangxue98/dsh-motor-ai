@@ -45,7 +45,13 @@ export async function registerActivateCommand(ctx, config = {}) {
       },
       required: ['code'],
     },
+    // DSH 0.1.7 硬要求：output { schema, render }，execute 必须返回 string
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
     async execute(params) {
+      const __run = async () => {
       const { code, buyer } = params
       if (!code || typeof code !== 'string') {
         return {
@@ -71,6 +77,8 @@ export async function registerActivateCommand(ctx, config = {}) {
         error: result.reason,
         guide: buildActivationGuide('l1').guide,
       }
+      }
+      return JSON.stringify(await __run(), null, 2)
     },
   })
 

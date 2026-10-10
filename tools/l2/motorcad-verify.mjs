@@ -103,33 +103,38 @@ export async function registerL2Validate(ctx, config = {}) {
       },
       required: ['geo'],
     },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
     async execute(params) {
+      const __run = async () => {
       const actCheck = checkL2Activation()
       if (actCheck) return actCheck
 
       const { geo, limits = {} } = params
       const issues = []
       const warnings = []
-      
+
       // 几何自洽性检查
       const { Stator_Lam_Dia, Stator_Bore, Stator_Lam_Length } = geo
-      
+
       // 检查定子内径 < 外径
       if (Stator_Bore >= Stator_Lam_Dia) {
         issues.push('定子内径 ≥ 定子外径，几何冲突')
       }
-      
+
       // 检查铁芯长度 > 0
       if (!Stator_Lam_Length || Stator_Lam_Length <= 0) {
         issues.push('铁芯长度必须 > 0')
       }
-      
+
       // 检查外径上限（默认 500mm）
       const odLimit = limits.statorOdLimit || 500
       if (Stator_Lam_Dia > odLimit) {
         warnings.push(`定子外径 ${Stator_Lam_Dia}mm 超过上限 ${odLimit}mm`)
       }
-      
+
       return {
         status: issues.length === 0 ? 'valid' : 'invalid',
         tool: 'motor_l2_validate',
@@ -138,6 +143,8 @@ export async function registerL2Validate(ctx, config = {}) {
         warnings,
         geo,
       }
+      }
+      return JSON.stringify(await __run(), null, 2)
     },
   })
   
@@ -175,12 +182,17 @@ export async function registerMotorCADVerify(ctx, config = {}) {
       },
       required: ['design'],
     },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
     async execute(params) {
+      const __run = async () => {
       const actCheck = checkL2Activation()
       if (actCheck) return actCheck
 
       const { design, template } = params
-      
+
       // 检查前置条件：优先 MOTORCAD_PATH，其次按系统默认安装目录探测。
       // 不内置任何绝对路径字面量 —— ProgramFiles 由操作系统注入。
       const programFiles = process.env.ProgramFiles ||
@@ -201,7 +213,7 @@ export async function registerMotorCADVerify(ctx, config = {}) {
           suggestion: '请安装 Motor-CAD v11.1.5 并设置 MOTORCAD_PATH 环境变量',
         }
       }
-      
+
       try {
         // 实际实现需要:
         // 1. 创建 MotorCADSession
@@ -209,7 +221,7 @@ export async function registerMotorCADVerify(ctx, config = {}) {
         // 3. 写入设计参数
         // 4. 执行求解
         // 5. 读取结果
-        
+
         // 占位实现
         return {
           status: 'placeholder',
@@ -228,6 +240,8 @@ export async function registerMotorCADVerify(ctx, config = {}) {
           error: err.message,
         }
       }
+      }
+      return JSON.stringify(await __run(), null, 2)
     },
   })
   

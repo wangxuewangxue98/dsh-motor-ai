@@ -247,6 +247,49 @@ try {
   }
 }
 
+// 门禁 E：工具 output 声明（DSH 0.1.7 register 硬校验，防 "must declare output" 回归）
+// 事故样本：dsh-motor-ai@1.0.0-rc.4 的 activate/L1/L2 五工具裸注册缺 output，
+// DSH 启动即报 tool "..." must declare output { schema, render, presentationMeta? }。
+// 校验器与 dsh-tools/lib/index.js register() 同形态，运行时逐工具实测。
+{
+  try {
+    const plugin = (await import('file://' + join(ROOT, 'index.mjs').replace(/\\/g, '/'))).default
+    const registered = []
+    const ctx = {
+      tools: {
+        register(t) {
+          const output = t.output
+          if (output === undefined || typeof output !== 'object'
+            || typeof output.render !== 'function'
+            || (output.presentationMeta !== undefined && typeof output.presentationMeta !== 'function')) {
+            throw new TypeError(`tool "${t.name}" must declare output { schema, render, presentationMeta? }`)
+          }
+          registered.push(t)
+        },
+      },
+    }
+    await plugin(ctx, {})
+    const stringOk = []
+    const stringBad = []
+    for (const t of registered) {
+      try {
+        const v = await t.execute({})
+        if (typeof v === 'string') stringOk.push(t.name)
+        else stringBad.push(`${t.name} 返回 ${typeof v}`)
+      } catch {
+        stringOk.push(t.name + '(抛错路径,可接受)')
+      }
+    }
+    if (stringBad.length === 0) {
+      console.log(`✅ 工具 output 声明完整：${registered.length} 工具过 DSH 校验，execute 均返回 string`)
+    } else {
+      console.log(`❌ execute 返回类型缺陷 ${stringBad.length} 项：`); stringBad.forEach((l) => console.log('   ' + l)); failures++
+    }
+  } catch (e) {
+    console.log(`❌ 门禁 E 运行失败：${e.message}`); failures++
+  }
+}
+
 // ============================================================
 // 5. 汇总
 // ============================================================

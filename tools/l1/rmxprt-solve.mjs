@@ -181,13 +181,19 @@ export async function registerL1Estimate(ctx, config = {}) {
       },
       required: ['spec', 'geo'],
     },
+    // DSH 0.1.7 硬要求：output { schema, render }，execute 必须返回 string
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
     async execute(params, meta) {
+      const __run = async () => {
       const actCheck = checkActivation()
       if (actCheck) return actCheck
 
       const { spec, geo, motorType: mt } = params
       const resolvedType = mt || resolveMotorType(meta?.motorType || 'pmsm')
-      
+
       try {
         const result = await solveRmxprt({
           motorType: resolvedType,
@@ -195,7 +201,7 @@ export async function registerL1Estimate(ctx, config = {}) {
           ...spec,
           ...geo,
         }, [JSON.stringify({ spec, geo })])
-        
+
         return {
           status: 'success',
           tool: 'motor_l1_estimate',
@@ -215,9 +221,11 @@ export async function registerL1Estimate(ctx, config = {}) {
           metadata: { motorType: resolvedType },
         }
       }
+      }
+      return JSON.stringify(await __run(), null, 2)
     },
   })
-  
+
   console.log(`[dsh-motor-ai L1] 注册 motor_l1_estimate (${resolveMotorType(config?.defaultMotorType || 'pmsm')})`)
 }
 
@@ -247,21 +255,26 @@ export async function registerL1Pipeline(ctx, config = {}) {
       },
       required: ['candidates'],
     },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
     async execute(params) {
+      const __run = async () => {
       const actCheck = checkActivation()
       if (actCheck) return actCheck
 
       const { candidates, topN = 5, sortBy = 'efficiency' } = params
-      
+
       if (!Array.isArray(candidates) || candidates.length === 0) {
         return { status: 'error', error: 'candidates 不能为空' }
       }
-      
+
       // 取 TopN 候选
       const selected = candidates
         .sort((a, b) => (b[sortBy] || 0) - (a[sortBy] || 0))
         .slice(0, topN)
-      
+
       // 批量求解（并行）
       const results = await Promise.all(
         selected.map(async (cand) => {
@@ -272,7 +285,7 @@ export async function registerL1Pipeline(ctx, config = {}) {
               ...cand.spec,
               ...cand.geo,
             }, [JSON.stringify({ spec: cand.spec, geo: cand.geo })])
-            
+
             return {
               ...cand,
               l1_result: result,
@@ -288,10 +301,10 @@ export async function registerL1Pipeline(ctx, config = {}) {
           }
         })
       )
-      
+
       const successCount = results.filter(r => r.status === 'success').length
       const avgTime = results.reduce((sum, r) => sum + (r.l1_result?.solveTime || 0), 0) / results.length
-      
+
       return {
         status: 'success',
         tool: 'motor_l1_pipeline',
@@ -305,6 +318,8 @@ export async function registerL1Pipeline(ctx, config = {}) {
           avgSolveTime: avgTime.toFixed(2),
         },
       }
+      }
+      return JSON.stringify(await __run(), null, 2)
     },
   })
   
@@ -336,12 +351,17 @@ export async function registerRmxprtSolve(ctx, config = {}) {
       },
       required: ['design'],
     },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
     async execute(params) {
+      const __run = async () => {
       const actCheck = checkActivation()
       if (actCheck) return actCheck
 
       const { design, options = {} } = params
-      
+
       try {
         const result = await solveRmxprt({
           motorType: design.motorType || 'pmsm',
@@ -349,7 +369,7 @@ export async function registerRmxprtSolve(ctx, config = {}) {
           timeout: options.timeout || 120,
           ...design,
         }, [JSON.stringify(design)], options.timeout || 120)
-        
+
         return {
           status: 'success',
           tool: 'motor_rmxprt_solve',
@@ -366,6 +386,8 @@ export async function registerRmxprtSolve(ctx, config = {}) {
           error: err.message,
         }
       }
+      }
+      return JSON.stringify(await __run(), null, 2)
     },
   })
   

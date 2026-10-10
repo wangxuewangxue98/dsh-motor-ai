@@ -1,3 +1,10 @@
+## [1.0.0-rc.5] - 2026-10-11
+
+### Fixed
+- activate/L1/L2 五工具补 DSH 0.1.7 硬要求的 output { schema, render } 声明；
+  execute 统一返回 JSON 字符串（与 l0 工具同形态）。修复启动报
+  tool "..." must declare output { schema, render, presentationMeta? }。
+
 # 变更日志
 
 ## [1.0.0-rc.3] - 2026-10-11 — 支持在 DSH 界面直接安装（补「组合包」声明）
