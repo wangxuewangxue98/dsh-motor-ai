@@ -99,7 +99,7 @@ export async function registerAll(ctx, config = {}) {
 /**
  * 插件 Config Schema
  */
-export const CONFIG_SCHEMA = {
+const CONFIG_SCHEMA = {
   type: 'object',
   properties: {
     level: {
