@@ -6,12 +6,13 @@
 
 import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 // 获取项目根目录（scripts 的父目录）
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const ROOT = join(__dirname, '..')
+const ROOT_URL = pathToFileURL(ROOT).href
 
 // ============================================================
 // 1. 基础文件检查
@@ -100,7 +101,7 @@ try {
 
 try {
   // 尝试导入插件入口（使用 file:// URL 避免 Windows 路径问题）
-  const pluginUrl = new URL(join(ROOT, 'index.mjs'), import.meta.url)
+  const pluginUrl = new URL('index.mjs', ROOT_URL)
   const plugin = await import(pluginUrl.href)
   console.log(`✅ index.mjs 导入成功`)
   console.log(`   导出: ${Object.keys(plugin).slice(0, 5).join(', ')}...`)
@@ -116,7 +117,7 @@ console.log('\n=== 互斥检测检查 ===')
 try {
   // 清除全局标记后重新导入
   delete globalThis.__DSH_MOTOR_AI_FULL_LOADED__
-  const pluginUrl = new URL(join(ROOT, 'index.mjs'), import.meta.url)
+  const pluginUrl = new URL('index.mjs', ROOT_URL)
   const plugin = await import(pluginUrl.href)
   console.log('✅ 互斥检测机制存在')
 } catch (err) {
