@@ -149,4 +149,6 @@ export {
   registerL0Tools,
   registerL1Placeholders,
   registerL2Placeholders,
+  ALL_TOOL_NAMES,
+  CONFIG_SCHEMA,
 }
