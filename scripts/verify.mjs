@@ -290,6 +290,46 @@ try {
   }
 }
 
+// 门禁 F：入口 apply 返回值必须是合法 cordis effect（函数 / null / undefined）
+// 事故样本：dsh-motor-ai@1.0.0-rc.5 的 pluginEntry 为 async 且 return 普通对象，
+// cordis _execute 把 apply 返回值当 effect：走 effect.then(safeCollect)，
+// 对象既非函数又非 nullable ⇒ TypeError: Invalid effect at safeCollect
+// ⇒ 插件"装得上、启用失败"（界面：1 entry did not activate）。
+// 复刻 cordis/lib/index.js:1135-1167 的 _execute 判定路径。
+{
+  const isNullable = (v) => v === null || v === undefined
+  const isObject = (v) => v !== null && typeof v === 'object'
+  const fBad = []
+  try {
+    const plugin = (await import('file://' + join(ROOT, 'index.mjs').replace(/\\/g, '/'))).default
+    const stubCtx = {
+      logger: { info() {}, warn() {}, error() {} },
+      tools: { register() {}, unregister() {} },
+      effect() { return () => {} },
+      on() { return () => {} },
+    }
+    const effect = plugin(stubCtx, {})
+    if (typeof effect === 'function') { /* disposer，合法 */ }
+    else if (isNullable(effect)) { /* void，合法 */ }
+    else if (!isObject(effect)) fBad.push(`apply 返回 ${typeof effect}（应为函数或 null/undefined）`)
+    else if ('then' in effect) {
+      await effect.then((v) => {
+        if (typeof v !== 'function' && !isNullable(v)) {
+          fBad.push(`async apply 的 resolve 值非法（${v === null ? 'null' : typeof v}）：cordis 会抛 "Invalid effect"`)
+        }
+      })
+    } else if (Symbol.iterator in effect || Symbol.asyncIterator in effect) { /* 生成器形态，DSH 迭代收集 */ }
+    else fBad.push('apply 返回的对象既非 promise 也非可迭代（cordis 抛 "Invalid effect"）')
+  } catch (e) {
+    fBad.push(`门禁 F 运行失败：${e.message}`)
+  }
+  if (fBad.length === 0) {
+    console.log('✅ 入口 apply 返回值符合 cordis effect 契约（函数 / null / undefined）')
+  } else {
+    console.log(`❌ 入口 effect 契约缺陷 ${fBad.length} 项：`); fBad.forEach((l) => console.log('   ' + l)); failures++
+  }
+}
+
 // ============================================================
 // 5. 汇总
 // ============================================================

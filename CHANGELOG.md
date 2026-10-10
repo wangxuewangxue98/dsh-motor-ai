@@ -1,3 +1,15 @@
+## [1.0.0-rc.6] - 2026-10-11
+
+### Fixed
+- **修复"装得上、启用报故障"第三层**：入口 `pluginEntry`（async）`return` 普通对象，
+  cordis 把插件 apply 的返回值当作 effect，只接受 disposer 函数或 null/undefined；
+  async 入口 resolve 成对象会走 `effect.then(safeCollect)` ⇒
+  `TypeError: Invalid effect at safeCollect`（界面：`1 entry did not activate dsh-motor-ai (dsh-motor-ai)`，
+  同时提示"当前插件 v1.0.0-rc.5 已是 latest 或更高版本，仍阻挡启动"）。
+  改为**不返回值**；需要 `registered/skipped/activation` 信息的外部脚本请用命名导出 `registerAll()`。
+- `scripts/verify.mjs` 新增**门禁 F**：复刻 cordis `_execute`（lib/index.js:1135-1167）判定路径，
+  运行时校验入口 apply 返回值必须是函数 / null / undefined（已用 rc.5 破坏样本反向验证：FAIL→PASS）。
+
 ## [1.0.0-rc.5] - 2026-10-11
 
 ### Fixed

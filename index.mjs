@@ -155,14 +155,19 @@ export default async function pluginEntry(ctx, config) {
     ? `${activation.tier.toUpperCase()}（${activation.buyer || 'anonymous'}）`
     : '未激活（L0 免费可用，L1/L2 需激活）')
 
-  const { registered, skipped, activation: act, l1Allowed, l2Allowed } = await registerAll(ctx, config)
+  const { registered, skipped } = await registerAll(ctx, config)
 
   console.log(`[dsh-motor-ai] 已注册 ${registered.length} 个工具:`, registered)
   if (skipped.length > 0) {
     console.log(`[dsh-motor-ai] 跳过 ${skipped.length} 个工具:`, skipped)
   }
 
-  return { registered, skipped, activation: act, l1Allowed, l2Allowed }
+  // ⚠️ 此处**绝不能 return 普通对象**：cordis 把插件 apply 的返回值当作 effect，
+  // 只接受 disposer 函数或 null/undefined（cordis/lib/index.js:1138-1144）。
+  // async 入口若 resolve 成对象，会走 effect.then(safeCollect)
+  // ⇒ TypeError: Invalid effect at safeCollect ⇒ "装得上、启用失败"。
+  // （已由 scripts/verify.mjs 门禁 F 锁定）
+  // 外部脚本若需要 registered/skipped/activation 信息，直接调用命名导出 registerAll()。
 }
 
 // cordis 在**调用 apply 之前**就读取插件对象自身的 inject 属性判定可访问服务；
