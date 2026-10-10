@@ -35,6 +35,9 @@ import {
   buildActivationGuide,
 } from './lib/license.mjs'
 
+/** 注入依赖：tools（工具注册能力，与免费版 dsh-motor-ai-l0 同一要求） */
+export const inject = ['tools']
+
 /** 所有已注册工具名（供日志与自检查询） */
 export const ALL_TOOL_NAMES = [
   ...L0_TOOL_NAMES,
@@ -161,6 +164,11 @@ export default async function pluginEntry(ctx, config) {
 
   return { registered, skipped, activation: act, l1Allowed, l2Allowed }
 }
+
+// cordis 在**调用 apply 之前**就读取插件对象自身的 inject 属性判定可访问服务；
+// 裸函数导出必须在模块加载时挂上，否则 ctx.tools 访问被拒
+// （报错形态：cannot get property "tools" without inject）
+pluginEntry.inject = inject
 
 // 导出公共 API（供外部脚本使用）
 export {

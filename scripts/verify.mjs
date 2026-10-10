@@ -226,6 +226,27 @@ try {
   }
 }
 
+// 门禁 D：入口 inject 声明（防 "cannot get property tools without inject" 类缺陷回归）
+// 事故样本：dsh-motor-ai@1.0.0-rc.3 的 index.mjs 默认导出裸函数且未声明 inject，
+// cordis 在调用 apply 前拒绝对 ctx.tools 的访问 ⇒ 插件装上了但启用即报组件启用失败。
+// 修复形态（对齐 dsh-motor-ai-l0）：命名导出 inject=['tools'] + pluginEntry.inject 挂载。
+{
+  const entryPath = join(ROOT, 'index.mjs')
+  const src = readFileSync(entryPath, 'utf8')
+  const dBad = []
+  if (!/export\s+const\s+inject\s*=\s*\[\s*['"]tools['"]\s*\]/.test(src)) {
+    dBad.push('index.mjs 缺命名导出 inject = [\'tools\']')
+  }
+  if (!/^pluginEntry\.inject\s*=\s*inject/m.test(src)) {
+    dBad.push('index.mjs 缺 pluginEntry.inject 挂载（cordis 在调用 apply 前读取，函数体内赋值无效）')
+  }
+  if (dBad.length === 0) {
+    console.log('✅ 入口 inject 声明完整（named export + 函数挂载）')
+  } else {
+    console.log(`❌ 入口 inject 缺陷 ${dBad.length} 项：`); dBad.forEach((l) => console.log('   ' + l)); failures++
+  }
+}
+
 // ============================================================
 // 5. 汇总
 // ============================================================
