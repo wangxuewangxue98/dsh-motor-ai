@@ -6,7 +6,7 @@
 
 import { registerL2Tools } from './motorcad-verify.mjs'
 
-/** L2 工具名列表（从 motorcad-verify.mjs 导出） */
+/** L2 工具名列表（从 motorcad-verify.mjs 导入） */
 export const L2_TOOL_NAMES = [
   'motor_l2_validate',
   'motor_motorcad_verify',
@@ -30,5 +30,4 @@ export async function registerL2Placeholders(ctx, config = {}, options = {}) {
   return await registerL2Tools(ctx, config)
 }
 
-export { L2_TOOL_NAMES }
 export default { registerL2Placeholders, L2_TOOL_NAMES }

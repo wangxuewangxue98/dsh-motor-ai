@@ -6,7 +6,7 @@
 
 import { registerL1Tools } from './rmxprt-solve.mjs'
 
-/** L1 工具名列表（从 rmxprt-solve.mjs 导出） */
+/** L1 工具名列表（从 rmxprt-solve.mjs 导入） */
 export const L1_TOOL_NAMES = [
   'motor_l1_estimate',
   'motor_l1_pipeline',
@@ -31,5 +31,4 @@ export async function registerL1Placeholders(ctx, config = {}, options = {}) {
   return await registerL1Tools(ctx, config)
 }
 
-export { L1_TOOL_NAMES }
 export default { registerL1Placeholders, L1_TOOL_NAMES }
