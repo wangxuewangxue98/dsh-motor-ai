@@ -5,3 +5,5 @@ node_modules/
 activation-keys.json
 # 非对称激活私钥（Ed25519，作者自持；.secrets/ 不在 files 白名单，且此处排除，绝不随包）
 .secrets/
+# 发布与变现计划（含定价策略、私域渠道、激活机制设计）——仅本地参考，绝不公开/入库
+PUBLISH_AND_MONETIZATION_PLAN.md

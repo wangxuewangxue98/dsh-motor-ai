@@ -13,20 +13,15 @@ export const L2_TOOL_NAMES = [
 ]
 
 /**
- * 注册 L2 工具集
+ * 注册 L2 工具集。
+ * 设计原则：L2 工具**始终注册**（工具恒存在），授权检查推迟到调用时
+ * （motorcad-verify.mjs 的 checkL2Activation）→ 未激活返回 LICENSE_REQUIRED 引导，
+ * 绝不因未授权而拒绝加载插件或隐藏工具。L0 永远可用。
  * @param {import('@deepseek-ai/cordis').Context} ctx
  * @param {object} config
  * @returns {Promise<string[]>}
  */
-export async function registerL2Placeholders(ctx, config = {}, options = {}) {
-  const { guideOnly = false } = options
-  
-  if (guideOnly) {
-    // 仅记录跳过，不注册
-    console.log('[dsh-motor-ai L2] guideOnly 模式，跳过工具注册')
-    return []
-  }
-  
+export async function registerL2Placeholders(ctx, config = {}) {
   return await registerL2Tools(ctx, config)
 }
 

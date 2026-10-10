@@ -90,7 +90,7 @@ plugins:
 2. 在 DSH 对话中运行命令：`/dsh-motor-ai-activate <code>`
 3. 回显 `✅ 激活成功！当前层级: FULL`，`motor_l1_*` / `motor_l2_*` 即解锁
 4. 激活状态落盘 `$DSH_HOME/storages/dsh-motor-ai/activation.json`
-5. 未激活时调 L1/L2：返回 `requires_activation` 引导（不会崩）
+5. 未激活时调 L1/L2：返回 `LICENSE_REQUIRED` 结构化引导（含联系邮箱，不会崩，L0 照常可用）
 
 ### 作者自测签码（非对称 Ed25519）
 
@@ -118,4 +118,14 @@ node scripts/mint-activation-code.mjs --type full --issuer wangxue98 --buyer 153
 ```bash
 node scripts/_activate_selftest.mjs   # 临时 DSH_HOME 隔离，覆盖未激活拦截/签发激活/降档/伪造/篡改/过期/格式容错
 ```
+
+## 商业授权
+
+本插件按 **PolyForm Noncommercial 1.0** 许可分发：个人及非商业用途可免费使用；商业用途需获取商业授权。
+
+- **L0（公式通道）对所有用户永久免费，无需激活码。**
+- L1（RMxprt）/ L2（Motor-CAD）为完整版付费层，需激活码解锁。
+- 激活码**只锁 L1/L2，绝不锁 L0**；无码、码过期或码无效时，插件照常加载、L0 全部可用，仅在调用 L1/L2 时返回引导。
+
+商业授权报价与采购，请联系：**13546196530@163.com**
 ```

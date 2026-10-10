@@ -88,24 +88,14 @@ export async function registerAll(ctx, config = {}) {
     skipped.push(...L0_TOOL_NAMES)
   }
 
-  // L1 条件注册
-  if (level === 'l1' && isLevelEnabled(config, 'l1')) {
-    const l1Tools = await registerL1Placeholders(ctx, config)
-    registered.push(...l1Tools)
-  } else if (level === 'l1' && !isLevelEnabled(config, 'l1')) {
-    // 配置了 L1 但未启用，注册占位符并给出引导
-    const l1Tools = await registerL1Placeholders(ctx, config, { guideOnly: true })
-    skipped.push(...l1Tools)
-  }
+  // L1 始终注册（工具恒存在）；调用时按许可证门控——
+  // 无码/过期/无效 → 返回 LICENSE_REQUIRED 引导，L0 不受影响（落实引流触点 2）
+  const l1Tools = await registerL1Placeholders(ctx, config)
+  registered.push(...l1Tools)
 
-  // L2 条件注册
-  if (level === 'l2' && isLevelEnabled(config, 'l2')) {
-    const l2Tools = await registerL2Placeholders(ctx, config)
-    registered.push(...l2Tools)
-  } else if (level === 'l2' && !isLevelEnabled(config, 'l2')) {
-    const l2Tools = await registerL2Placeholders(ctx, config, { guideOnly: true })
-    skipped.push(...l2Tools)
-  }
+  // L2 始终注册（同上）
+  const l2Tools = await registerL2Placeholders(ctx, config)
+  registered.push(...l2Tools)
 
   // 附带当前激活状态（供前端/调用方展示）
   const activation = queryActivation()
