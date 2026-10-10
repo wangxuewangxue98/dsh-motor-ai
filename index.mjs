@@ -19,8 +19,8 @@ import {
   isLevelEnabled,
   tierOf,
   registerL0Tools,
-  L0_TOOL_NAMES,
 } from '@yourscope/dsh-motor-ai-core'
+import { L0_TOOL_NAMES } from './tools/l0/index.mjs'
 
 // L1/L2 占位工具注册器（后续实现）
 import { registerL1Placeholders } from './tools/l1/index.mjs'

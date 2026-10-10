@@ -8,8 +8,10 @@ import { readFileSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const ROOT = __dirname
+// 获取项目根目录（scripts 的父目录）
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+const ROOT = join(__dirname, '..')
 
 // ============================================================
 // 1. 基础文件检查
@@ -97,8 +99,8 @@ try {
 }
 
 try {
-  // 尝试导入插件入口（使用相对路径）
-  const plugin = await import('./index.mjs')
+  // 尝试导入插件入口（使用绝对路径）
+  const plugin = await import(join(ROOT, 'index.mjs'))
   console.log(`✅ index.mjs 导入成功`)
   console.log(`   导出: ${Object.keys(plugin).slice(0, 5).join(', ')}...`)
 } catch (err) {
@@ -113,7 +115,7 @@ console.log('\n=== 互斥检测检查 ===')
 try {
   // 清除全局标记后重新导入
   delete globalThis.__DSH_MOTOR_AI_FULL_LOADED__
-  const plugin = await import('./index.mjs')
+  const plugin = await import(join(ROOT, 'index.mjs'))
   console.log('✅ 互斥检测机制存在')
 } catch (err) {
   if (err.message.includes('互斥') || err.message.includes('冲突')) {
