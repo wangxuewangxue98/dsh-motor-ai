@@ -2,18 +2,23 @@
  * L1 RMxprt 求解工具
  * ============================================================
  * 通过子进程调用 _rmxprt_venv_worker.py 执行 RMxprt 磁路法求解。
- * 
+ *
  * 实现计划:
  *   - motor_l1_estimate: 单次 RMxprt 估算
  *   - motor_l1_pipeline: 批量 RMxprt 求解 + TopN 筛选
  *   - motor_rmxprt_solve: 精细几何求解（完整参数）
- * 
+ *
  * 与 L0 的区别:
  *   - L0: 经验公式，毫秒级，全候选池
  *   - L1: RMxprt 磁路法，秒级，TopN 精选
  */
 
-import { resolveMotorType, normalizeLevel } from '@yourscope/dsh-motor-ai-core'
+import { resolveMotorType } from '@yourscope/dsh-motor-ai-core'
+import { spawn } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
+import { readFile, writeFile, unlink } from 'node:fs/promises'
 
 /** L1 工具名列表 */
 export const L1_TOOL_NAMES = [
@@ -25,10 +30,10 @@ export const L1_TOOL_NAMES = [
 /**
  * RMxprt 求解器路径（可通过环境变量覆盖）
  */
-const RMXPRT_WORKER_PATH = process.env.RMXPRT_WORKER_PATH || 
+const RMXPRT_WORKER_PATH = process.env.RMXPRT_WORKER_PATH ||
   'D:/MotorDesign/Scripts/_rmxprt_venv_worker.py'
 
-const PYTHON_BIN = process.env.PYTHON_BIN || 
+const PYTHON_BIN = process.env.PYTHON_BIN ||
   'D:/MotorDesign/Scripts/python310_win32/python.exe'
 
 /**
@@ -39,15 +44,13 @@ const PYTHON_BIN = process.env.PYTHON_BIN ||
  * @returns {Promise<object>} 求解结果
  */
 export async function solveRmxprt(params, paramList, timeout = 120) {
-  const { spawn } = await import('node:child_process')
-  const { tmpdir } = await import('node:os')
-  const { join } = await import('node:path')
-  const { randomUUID } = await import('node:crypto')
-  
   const taskId = randomUUID().slice(0, 8)
   const paramsPath = join(tmpdir(), `l1_params_${taskId}.json`)
   const outputPath = join(tmpdir(), `l1_results_${taskId}.json`)
   const varMapPath = join(tmpdir(), `l1_varmap_${taskId}.json`)
+
+  // 写入输入文件
+  await writeFile(paramsPath, JSON.stringify(params), 'utf-8')
   
   // 写入输入文件
   await (await import('node:fs')).writeFile(paramsPath, JSON.stringify(params), 'utf-8')
@@ -67,21 +70,21 @@ export async function solveRmxprt(params, paramList, timeout = 120) {
       timeout: timeout * 1000,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
-    
+
     let stderr = ''
     child.stderr.on('data', (data) => { stderr += data.toString() })
-    
-    child.on('close', (code) => {
+
+    child.on('close', async (code) => {
       // 清理临时文件
       try {
-        (await import('node:fs')).unlinkSync(paramsPath)
-        (await import('node:fs')).unlinkSync(outputPath)
-        (await import('node:fs')).unlinkSync(varMapPath)
+        await unlink(paramsPath)
+        await unlink(outputPath)
+        await unlink(varMapPath)
       } catch {}
-      
+
       if (code === 0) {
         try {
-          const result = JSON.parse((await import('node:fs')).readFileSync(outputPath, 'utf-8'))
+          const result = JSON.parse(await readFile(outputPath, 'utf-8'))
           resolve(result)
         } catch (err) {
           reject(new Error(`RMxprt 结果解析失败: ${err.message}`))
@@ -90,7 +93,7 @@ export async function solveRmxprt(params, paramList, timeout = 120) {
         reject(new Error(`RMxprt 求解失败 (code=${code}): ${stderr.slice(-500)}`))
       }
     })
-    
+
     child.on('error', (err) => {
       reject(new Error(`RMxprt 进程启动失败: ${err.message}`))
     })
