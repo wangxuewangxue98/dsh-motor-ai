@@ -13,12 +13,13 @@
  *   - L1: RMxprt 磁路法，秒级，TopN 精选
  */
 
-import { resolveMotorType } from '@wangxue98/dsh-motor-ai-core'
+import { resolveMotorType, isLevelEnabled } from '@wangxue98/dsh-motor-ai-core'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile, unlink } from 'node:fs/promises'
+import { queryActivation, isLevelAllowed, buildActivationGuide } from '../../lib/license.mjs'
 
 /** L1 工具名列表 */
 export const L1_TOOL_NAMES = [
@@ -26,6 +27,15 @@ export const L1_TOOL_NAMES = [
   'motor_l1_pipeline',
   'motor_rmxprt_solve',
 ]
+
+/** 激活检查钩子：L1 工具调用前必须通过此检查 */
+function checkActivation() {
+  const { active, tier } = queryActivation()
+  if (!active || !isLevelAllowed('l1')) {
+    return buildActivationGuide('l1')
+  }
+  return null // null = 通过，可继续执行
+}
 
 /**
  * RMxprt 求解器与 Python 解释器路径解析。
@@ -172,6 +182,9 @@ export async function registerL1Estimate(ctx, config = {}) {
       required: ['spec', 'geo'],
     },
     async execute(params, meta) {
+      const actCheck = checkActivation()
+      if (actCheck) return actCheck
+
       const { spec, geo, motorType: mt } = params
       const resolvedType = mt || resolveMotorType(meta?.motorType || 'pmsm')
       
@@ -235,6 +248,9 @@ export async function registerL1Pipeline(ctx, config = {}) {
       required: ['candidates'],
     },
     async execute(params) {
+      const actCheck = checkActivation()
+      if (actCheck) return actCheck
+
       const { candidates, topN = 5, sortBy = 'efficiency' } = params
       
       if (!Array.isArray(candidates) || candidates.length === 0) {
@@ -321,6 +337,9 @@ export async function registerRmxprtSolve(ctx, config = {}) {
       required: ['design'],
     },
     async execute(params) {
+      const actCheck = checkActivation()
+      if (actCheck) return actCheck
+
       const { design, options = {} } = params
       
       try {

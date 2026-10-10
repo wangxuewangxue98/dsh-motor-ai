@@ -1,3 +1,5 @@
 node_modules/
 .DS_Store
 *.log
+# 激活码 HMAC 密钥（签发者私钥，绝不入库/不随包分发；scripts/ 虽在发布白名单但此文件在根目录不在其中）
+activation-keys.json

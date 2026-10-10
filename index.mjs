@@ -25,6 +25,16 @@ import { registerL0Tools, L0_TOOL_NAMES } from './tools/l0/index.mjs'
 import { registerL1Placeholders } from './tools/l1/index.mjs'
 import { registerL2Placeholders } from './tools/l2/index.mjs'
 
+// 激活机制（收费轨 A）
+import { registerActivateCommand, ACTIVATE_TOOL_NAME } from './tools/activate.mjs'
+import {
+  activate as activateLicense,
+  queryActivation,
+  isLevelAllowed,
+  createActivateCode,
+  buildActivationGuide,
+} from './lib/license.mjs'
+
 /** 所有已注册工具名（供日志与自检查询） */
 export const ALL_TOOL_NAMES = [
   ...L0_TOOL_NAMES,
@@ -65,7 +75,11 @@ export async function registerAll(ctx, config = {}) {
   const level = normalizeLevel(config?.level || 'l0')
   const registered = []
   const skipped = []
-  
+
+  // 激活命令始终注册（免费用户用它解锁 L1/L2；已激活用户可查询状态）
+  await registerActivateCommand(ctx, config)
+  registered.push(ACTIVATE_TOOL_NAME)
+
   // L0 始终注册（免费层）
   if (level === 'l0' || isLevelEnabled(config, 'l0')) {
     await registerL0Tools(ctx, config)
@@ -73,7 +87,7 @@ export async function registerAll(ctx, config = {}) {
   } else {
     skipped.push(...L0_TOOL_NAMES)
   }
-  
+
   // L1 条件注册
   if (level === 'l1' && isLevelEnabled(config, 'l1')) {
     const l1Tools = await registerL1Placeholders(ctx, config)
@@ -83,7 +97,7 @@ export async function registerAll(ctx, config = {}) {
     const l1Tools = await registerL1Placeholders(ctx, config, { guideOnly: true })
     skipped.push(...l1Tools)
   }
-  
+
   // L2 条件注册
   if (level === 'l2' && isLevelEnabled(config, 'l2')) {
     const l2Tools = await registerL2Placeholders(ctx, config)
@@ -92,8 +106,17 @@ export async function registerAll(ctx, config = {}) {
     const l2Tools = await registerL2Placeholders(ctx, config, { guideOnly: true })
     skipped.push(...l2Tools)
   }
-  
-  return { registered, skipped, config }
+
+  // 附带当前激活状态（供前端/调用方展示）
+  const activation = queryActivation()
+  return {
+    registered,
+    skipped,
+    config,
+    activation,
+    l1Allowed: isLevelAllowed('l1'),
+    l2Allowed: isLevelAllowed('l2'),
+  }
 }
 
 /**
@@ -118,6 +141,11 @@ const CONFIG_SCHEMA = {
       default: false,
       description: '是否启用 L2（Motor-CAD 验证器）',
     },
+    activationHmacKey: {
+      type: 'string',
+      default: '',
+      description: '激活码 HMAC 验签密钥（缺省读 ACTIVATION_HMAC_KEY 环境变量；不填则激活命令不可用，L1/L2 维持未激活态）',
+    },
     // ... 其他配置项可继承自 core
   },
 }
@@ -126,18 +154,22 @@ const CONFIG_SCHEMA = {
  * 插件入口函数（DSH 框架调用）
  */
 export default async function pluginEntry(ctx, config) {
+  const activation = queryActivation()
   console.log('[dsh-motor-ai] 加载完整版，层级:', config?.level || 'l0')
   console.log('[dsh-motor-ai] L1 已启用:', config?.l1Enabled)
   console.log('[dsh-motor-ai] L2 已启用:', config?.l2Enabled)
-  
-  const { registered, skipped } = await registerAll(ctx, config)
-  
+  console.log('[dsh-motor-ai] 激活状态:', activation.active
+    ? `${activation.tier.toUpperCase()}（${activation.buyer || 'anonymous'}）`
+    : '未激活（L0 免费可用，L1/L2 需激活）')
+
+  const { registered, skipped, activation: act, l1Allowed, l2Allowed } = await registerAll(ctx, config)
+
   console.log(`[dsh-motor-ai] 已注册 ${registered.length} 个工具:`, registered)
   if (skipped.length > 0) {
     console.log(`[dsh-motor-ai] 跳过 ${skipped.length} 个工具:`, skipped)
   }
-  
-  return { registered, skipped }
+
+  return { registered, skipped, activation: act, l1Allowed, l2Allowed }
 }
 
 // 导出公共 API（供外部脚本使用）
@@ -149,4 +181,11 @@ export {
   registerL0Tools,
   registerL1Placeholders,
   registerL2Placeholders,
+  registerActivateCommand,
+  ACTIVATE_TOOL_NAME,
+  activateLicense,
+  queryActivation,
+  isLevelAllowed,
+  createActivateCode,
+  buildActivationGuide,
 }

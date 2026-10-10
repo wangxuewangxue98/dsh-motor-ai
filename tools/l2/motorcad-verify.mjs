@@ -16,12 +16,22 @@
 import { resolveMotorType } from '@wangxue98/dsh-motor-ai-core'
 import { existsSync } from 'node:fs'
 import { join as joinPath } from 'node:path'
+import { queryActivation, isLevelAllowed, buildActivationGuide } from '../../lib/license.mjs'
 
 /** L2 工具名列表 */
 export const L2_TOOL_NAMES = [
   'motor_l2_validate',
   'motor_motorcad_verify',
 ]
+
+/** 激活检查钩子：L2 工具调用前必须通过此检查 */
+function checkL2Activation() {
+  const { active } = queryActivation()
+  if (!active || !isLevelAllowed('l2')) {
+    return buildActivationGuide('l2')
+  }
+  return null // null = 通过
+}
 
 /**
  * Motor-CAD COM 连接管理器（简化版）
@@ -94,6 +104,9 @@ export async function registerL2Validate(ctx, config = {}) {
       required: ['geo'],
     },
     async execute(params) {
+      const actCheck = checkL2Activation()
+      if (actCheck) return actCheck
+
       const { geo, limits = {} } = params
       const issues = []
       const warnings = []
@@ -163,6 +176,9 @@ export async function registerMotorCADVerify(ctx, config = {}) {
       required: ['design'],
     },
     async execute(params) {
+      const actCheck = checkL2Activation()
+      if (actCheck) return actCheck
+
       const { design, template } = params
       
       // 检查前置条件：优先 MOTORCAD_PATH，其次按系统默认安装目录探测。
