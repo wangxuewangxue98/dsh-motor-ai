@@ -1,5 +1,17 @@
 # 变更日志
 
+## [1.0.0-rc] - 2026-10-10 — 激活机制升级：非对称 Ed25519 验签
+
+### 变更
+- 激活码由对称 HMAC（v1）升级为**非对称 Ed25519（v2）**：公钥随包发布（`lib/activation-public.pem` + `lib/license.mjs` 内置常量），私钥作者自持（`.secrets/activation-private.pem`，绝不入库/不随包）
+- 部署后的公开包**内置公钥即可验签**，外部买家可被真实放行（修复 beta 的「激活服务不可用」根因）
+- `scripts/mint-activation-code.mjs` 改用 Ed25519 私钥签 v2 码
+- `scripts/_activate_selftest.mjs` 适配 v2（私钥签码 + 伪造/篡改/过期断言）
+
+### 修复
+- 去除对 `ACTIVATION_HMAC_KEY` 环境变量的硬依赖（v2 无需任何外部密钥配置即可验签放行）
+- `index.mjs` CONFIG_SCHEMA：`activationHmacKey` → `activationPublicKeyPem`（可选覆盖公钥，仅密钥轮换/测试用）
+
 ## [1.0.0-beta] - 2026-10-10 — 激活机制（收费轨 A）
 
 ### 新增

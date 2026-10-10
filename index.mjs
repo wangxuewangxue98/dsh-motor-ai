@@ -141,10 +141,10 @@ const CONFIG_SCHEMA = {
       default: false,
       description: '是否启用 L2（Motor-CAD 验证器）',
     },
-    activationHmacKey: {
+    activationPublicKeyPem: {
       type: 'string',
       default: '',
-      description: '激活码 HMAC 验签密钥（缺省读 ACTIVATION_HMAC_KEY 环境变量；不填则激活命令不可用，L1/L2 维持未激活态）',
+      description: '验签公钥 PEM 覆盖（缺省用 lib/license.mjs 内置公钥；仅密钥轮换或测试时填，覆盖 ACTIVATION_PUBLIC_KEY_PEM）',
     },
     // ... 其他配置项可继承自 core
   },

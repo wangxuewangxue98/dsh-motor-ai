@@ -3,3 +3,5 @@ node_modules/
 *.log
 # 激活码 HMAC 密钥（签发者私钥，绝不入库/不随包分发；scripts/ 虽在发布白名单但此文件在根目录不在其中）
 activation-keys.json
+# 非对称激活私钥（Ed25519，作者自持；.secrets/ 不在 files 白名单，且此处排除，绝不随包）
+.secrets/

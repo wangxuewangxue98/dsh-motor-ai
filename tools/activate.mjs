@@ -3,6 +3,9 @@
  * ============================================================
  * 注册 `/dsh-motor-ai-activate` 命令，供用户在 DSH 对话中输入激活码。
  * 这是收费轨 A 的用户入口：私域收款 → 发放激活码 → 用户在插件中输入 → 激活 L1/L2。
+ *
+ * 验签机制：v2 非对称（Ed25519），插件内置公钥（lib/license.mjs 常量 + lib/activation-public.pem），
+ * 无需任何外部密钥配置即可验签放行。
  */
 
 import { activate, queryActivation, buildActivationGuide } from '../lib/license.mjs'
@@ -15,7 +18,10 @@ export const ACTIVATE_TOOL_NAME = 'dsh_motor_ai_activate'
  * @param {object} config
  */
 export async function registerActivateCommand(ctx, config = {}) {
-  const secret = config.activationHmacKey || null // 可选覆盖
+  // 可选：用配置的公钥覆盖内置公钥（密钥轮换 / 测试用）
+  if (config.activationPublicKeyPem) {
+    process.env.ACTIVATION_PUBLIC_KEY_PEM = config.activationPublicKeyPem
+  }
 
   ctx.tools.register({
     name: ACTIVATE_TOOL_NAME,
@@ -24,7 +30,7 @@ export async function registerActivateCommand(ctx, config = {}) {
 激活后 motor_l1_* / motor_l2_* 工具即可使用。
 
 参数:
-  - code: 激活码（形如 v1:full:issuer:buyer:ts:exp:hmac）
+  - code: 激活码（形如 v2:full:issuer:buyer:ts:exp:sig，Ed25519 签名）
   - buyer: 购买者标识（可选，覆盖激活码中的 buyer 字段）
 
 返回:
@@ -49,7 +55,7 @@ export async function registerActivateCommand(ctx, config = {}) {
         }
       }
 
-      const result = activate(code, secret)
+      const result = activate(code)
       if (result.success) {
         const state = queryActivation()
         return {

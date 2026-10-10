@@ -1,6 +1,6 @@
 {
   "name": "dsh-motor-ai",
-  "version": "1.0.0-beta",
+  "version": "1.0.0-rc",
   "description": "电机设计 L1/L2 完整版（RMxprt + Motor-CAD），需安装 dsh-motor-ai-l0 的共享核心",
   "type": "module",
   "main": "index.mjs",

@@ -4,9 +4,10 @@
  * 检查包结构、依赖、导入是否正常
  */
 
-import { readFileSync, existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { readFileSync, existsSync, readdirSync } from 'node:fs'
+import { join, dirname, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { execFileSync, spawnSync } from 'node:child_process'
 
 // 获取项目根目录（scripts 的父目录）
 const __filename = fileURLToPath(import.meta.url)
@@ -128,6 +129,60 @@ try {
   } else {
     console.log(`⚠️  意外错误: ${err.message}`)
   }
+}
+
+// ============================================================
+// 4.5 发布安全门禁（防 l0@0.3.0 类缺陷回归）
+// ============================================================
+console.log('\n=== 发布安全门禁 ===')
+
+// 门禁 A：P0 本机绝对路径泄漏（盘符绝对路径）
+const P0_DIRS = ['index.mjs', 'lib', 'tools', 'models', 'scripts', 'skills']
+let p0Bad = []
+for (const d of P0_DIRS) {
+  const dp = join(ROOT, d)
+  if (!existsSync(dp)) continue
+  try {
+    const { stdout } = spawnSync('grep', ['-rInE', '[A-Za-z]:[\\\\/](Users|MotorDesign|home|Program Files)', dp], { encoding: 'utf8', shell: true })
+    if (stdout) p0Bad = p0Bad.concat(stdout.split('\n').filter(Boolean))
+  } catch { /* ignore */ }
+}
+if (p0Bad.length === 0) {
+  console.log('✅ P0 本机绝对路径泄漏：0 处')
+} else {
+  console.log(`❌ P0 泄漏 ${p0Bad.length} 处：`); p0Bad.forEach(l => console.log('   ' + l)); failures++
+}
+
+// 门禁 B：进包 .mjs 的相对 import 必须命中包内文件
+try {
+  const packOut = execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8', shell: true })
+  const packInfo = JSON.parse(packOut)
+  const packed = (packInfo[0] && packInfo[0].files ? packInfo[0].files : []).map(f => f.path)
+  const packedSet = new Set(packed)
+  let relCount = 0
+  const missing = []
+  for (const pf of packed) {
+    if (!pf.endsWith('.mjs')) continue
+    const abs = join(ROOT, pf)
+    if (!existsSync(abs)) continue
+    const src = readFileSync(abs, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+    const re = /(?:import|await\s+import|require)\s*\(?\s*['"]([^'"]+)['"]\s*\)?/g
+    let m
+    while ((m = re.exec(src))) {
+      const spec = m[1]
+      if (!spec.startsWith('.')) continue
+      const rr = relative(ROOT, resolve(ROOT, dirname(pf), spec)).split(sep).join('/')
+      relCount++
+      if (!packedSet.has(rr)) missing.push(`${pf} -> ${spec} (${rr})`)
+    }
+  }
+  if (missing.length === 0) {
+    console.log(`✅ 进包 .mjs 相对 import 命中包内：${relCount} 处，0 缺包`)
+  } else {
+    console.log(`❌ 进包文件引用但未进包：${missing.length} 处：`); missing.forEach(l => console.log('   ' + l)); failures++
+  }
+} catch (e) {
+  console.log(`⚠️  进包门禁跳过（pack 失败）：${e.message}`)
 }
 
 // ============================================================
