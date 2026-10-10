@@ -5,10 +5,10 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url))
+const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = __dirname
 
 // ============================================================
@@ -43,13 +43,13 @@ for (const file of REQUIRED_FILES) {
 console.log('\n=== package.json 检查 ===')
 try {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf-8'))
-  
+
   const checks = [
     ['name', 'dsh-motor-ai'],
     ['version', /^1\.0\.0/],
     ['description', /完整版|L1|L2|RMxprt|Motor-CAD/i],
   ]
-  
+
   for (const [key, expected] of checks) {
     const actual = pkg[key]
     if (expected instanceof RegExp) {
@@ -68,7 +68,7 @@ try {
       }
     }
   }
-  
+
   // 检查依赖
   if (pkg.dependencies?.['@yourscope/dsh-motor-ai-core']) {
     console.log(`✅ core 依赖: ${pkg.dependencies['@yourscope/dsh-motor-ai-core']}`)
@@ -76,7 +76,7 @@ try {
     console.log('❌ 缺少 @yourscope/dsh-motor-ai-core 依赖')
     failures++
   }
-  
+
 } catch (err) {
   console.log(`❌ package.json 解析失败: ${err.message}`)
   failures++
@@ -97,7 +97,7 @@ try {
 }
 
 try {
-  // 尝试导入插件入口
+  // 尝试导入插件入口（使用相对路径）
   const plugin = await import('./index.mjs')
   console.log(`✅ index.mjs 导入成功`)
   console.log(`   导出: ${Object.keys(plugin).slice(0, 5).join(', ')}...`)
