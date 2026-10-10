@@ -13,10 +13,14 @@ dsh-motor-ai-core      ← 共享核心（公式引擎、代理模型、经验�
 ## 安装
 
 ```bash
-# 完整版（需先卸载免费版）
+# 完整版（需先卸载免费版，两者互斥）
 npm uninstall dsh-motor-ai-l0
 npm install dsh-motor-ai
 ```
+
+> **当前版本口径**：`latest` = `1.0.0-beta`；本版 `1.0.0-rc.2` 为预发布，走 `next` 标签。
+> 安装本版请用 `npm install dsh-motor-ai@next`（DSH profile 内对应 `pnpm add dsh-motor-ai@next`）。
+> 稳定版发布后 `@next` 可省略。
 
 ## 配置
 

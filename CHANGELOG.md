@@ -1,5 +1,17 @@
 # 变更日志
 
+## [1.0.0-rc.2] - 2026-10-10 — L1/L2 惰性门禁落地（激活码只锁 L1/L2，L0 永不锁）
+
+### 变更（架构原则）
+- **L1/L2 工具恒注册**：删除 `guideOnly` 注册门禁（`index.mjs` / `tools/l1/index.mjs` / `tools/l2/index.mjs`）。此前无激活码时 L1/L2 工具**根本不注册**，用户调不到也就看不到任何引导；现在恒注册，授权检查推迟到 `execute` 首行
+- **`buildActivationGuide()` 返回体升级**：`error: 'LICENSE_REQUIRED'` + `message` + `action.contact`（联系邮箱 `13546196530@163.com`）；保留 `status` / `guide` 旧字段，`tools/activate.mjs` 读 `.guide` 不受影响
+- `package.json` keywords 首位补 `dsh-plugin`（与 l0 对齐，供市场扫描器识别）
+- README 新增「商业授权」章节：L0 永久免费、激活码只锁 L1/L2、商业授权联系邮箱
+
+### 设计口径（诚实底线）
+- 无码 / 码过期 / 码无效 ⇒ 插件照常加载、**L0 全部可用**、L1/L2 返回结构化引导而非崩溃（`level-gate.mjs:44` `l0` 恒 `true`）
+- 门控为 honor-system 商业约定，非硬隔离
+
 ## [1.0.0-rc] - 2026-10-10 — 激活机制升级：非对称 Ed25519 验签
 
 ### 变更
