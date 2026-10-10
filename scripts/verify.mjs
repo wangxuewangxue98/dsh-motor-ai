@@ -101,7 +101,8 @@ try {
 
 try {
   // 尝试导入插件入口（使用 file:// URL 避免 Windows 路径问题）
-  const pluginUrl = new URL('index.mjs', ROOT_URL)
+  const indexPath = join(ROOT, 'index.mjs')
+  const pluginUrl = pathToFileURL(indexPath)
   const plugin = await import(pluginUrl.href)
   console.log(`✅ index.mjs 导入成功`)
   console.log(`   导出: ${Object.keys(plugin).slice(0, 5).join(', ')}...`)
@@ -117,7 +118,8 @@ console.log('\n=== 互斥检测检查 ===')
 try {
   // 清除全局标记后重新导入
   delete globalThis.__DSH_MOTOR_AI_FULL_LOADED__
-  const pluginUrl = new URL('index.mjs', ROOT_URL)
+  const indexPath = join(ROOT, 'index.mjs')
+  const pluginUrl = pathToFileURL(indexPath)
   const plugin = await import(pluginUrl.href)
   console.log('✅ 互斥检测机制存在')
 } catch (err) {
