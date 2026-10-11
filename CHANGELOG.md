@@ -1,3 +1,17 @@
+## [1.0.0-rc.8] - 2026-10-12
+
+### Added
+- **dshhub 口令市场上架清单**：仓库根新增 `manifest.json`（dshhub v2 规范）——
+  `manifestVersion:2` / `id:cn.motorai.dsh-motor-ai`（反域名）/ `kind:plugin` / `entry:{}` /
+  `license:PolyForm-Noncommercial-1.0.0`；声明 2 个 skill 与 10 个 tool，并标注依赖共享核心 `dsh-motor-ai-l0`。
+  此前仓库无清单 ⇒ dshhub「我的仓库」扫描时判为不可上架而自动隐藏。
+
+### Fixed
+- **npm 包缺失上架清单**：`package.json` 的 `files` 白名单补入 `manifest.json`
+  （此前发布物内无清单，`unpkg.com/dsh-motor-ai@*/manifest.json` 恒 404，市场按 npm 装取不到元数据）。
+- **npm dist-tag 与仓库版本脱节**：`latest` 停在旧的 `1.0.0-beta`，实际开发线已到 rc 系列；
+  本次发布 rc.8 并置为 `latest`，与 manifest/package.json 版本三者一致。
+
 ## [1.0.0-rc.7] - 2026-10-11
 
 ### Added
