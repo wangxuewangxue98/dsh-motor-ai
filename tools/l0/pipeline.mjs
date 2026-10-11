@@ -22,6 +22,7 @@ import { buildParamMatrix } from './param-matrix.mjs'
 import { runDesignValidate } from './design-validate.mjs'
 import { runL0Estimate } from './l0-estimate.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
+import { enforceQuota } from '../../lib/quota.mjs'
 
 /** 工具入参声明（矩阵生成参数 + 聚合控制） */
 export const TOOL_PARAMS = {
@@ -191,6 +192,8 @@ export async function registerL0Pipeline(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args) {
+      const quotaErr = await enforceQuota(config)
+      if (quotaErr) return quotaErr.error
       const t0 = Date.now()
       try {
         const result = runL0Pipeline(args, config)

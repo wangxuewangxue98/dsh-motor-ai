@@ -393,6 +393,81 @@ try {
   }
 }
 
+// 门禁 H：免费额度闸门 + 续费取 max（L2 自动化闭环配套）
+// 事故样本：后端 /api/dsh/free-call 与 dsh_free_usage 表早已建好，但插件端从未调用，
+// 「每日 5 次」形同虚设；且若闸门在断网时拦截，会把已付费用户一起锁死——
+// 后者比不限流严重得多。本门禁把「fail-open」钉成不可回归的硬约束。
+{
+  const hBad = []
+  try {
+    const quota = await import(pathToFileURL(join(ROOT, 'lib', 'quota.mjs')).href)
+    const lic = await import(pathToFileURL(join(ROOT, 'lib', 'license.mjs')).href)
+
+    for (const fn of ['checkFreeQuota', 'enforceQuota', 'buildQuotaExceededMessage']) {
+      if (typeof quota[fn] !== 'function') hBad.push(`quota.mjs 缺导出 ${fn}`)
+    }
+    if (typeof lic.laterExpiry !== 'function') hBad.push('license.mjs 缺导出 laterExpiry')
+
+    const sandboxHome = join(tmpdir(), `dsh-motor-ai-verify-h-${process.pid}`)
+    process.env.DSH_HOME = sandboxHome
+
+    // 1) 断网必须 fail-open（绝不能锁死用户）
+    globalThis.fetch = async () => { throw new Error('ECONNREFUSED') }
+    const off = await quota.checkFreeQuota({ backendUrl: 'http://mock.local' })
+    if (off.allowed !== true) hBad.push(`断网未 fail-open：allowed=${off.allowed}`)
+    if (off.reason !== 'backend-unreachable-fail-open') hBad.push(`断网 reason 异常：${off.reason}`)
+
+    // 2) 后端明确拒绝（allowed=false）必须拦截
+    globalThis.fetch = async () => ({
+      ok: true, status: 200,
+      json: async () => ({ allowed: false, used: 5, remaining: 0, limit: 5 }),
+    })
+    const exhausted = await quota.checkFreeQuota({ backendUrl: 'http://mock.local' })
+    if (exhausted.allowed !== false) hBad.push('额度用尽未拦截')
+
+    // 3) 非预期响应同样放行（fail-open 一致性）
+    globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ weird: 1 }) })
+    const weird = await quota.checkFreeQuota({ backendUrl: 'http://mock.local' })
+    if (weird.allowed !== true) hBad.push('非预期响应未 fail-open')
+
+    // 4) 已激活不请求后端：即便 fetch 抛错也应 reason=activated
+    lic.saveActivationState({
+      active: true, tier: 'full', buyer: 't', keyId: 'k', source: 'online',
+      expiresAt: new Date(Date.now() + 86400e3).toISOString(), deviceId: 'd',
+    })
+    globalThis.fetch = async () => { throw new Error('should-not-be-called') }
+    const act = await quota.checkFreeQuota({ backendUrl: 'http://mock.local' })
+    if (act.allowed !== true || act.reason !== 'activated') {
+      hBad.push(`已激活未跳过配额：${JSON.stringify(act)}`)
+    }
+
+    // 5) 续费取 max：更早的新码不得缩短原到期
+    const late = '2027-01-01T00:00:00'
+    const early = '2026-06-01T00:00:00'
+    if (lic.laterExpiry(late, early) !== late) hBad.push('laterExpiry 未取更晚者')
+    if (lic.laterExpiry(early, late) !== late) hBad.push('laterExpiry 对参数序敏感')
+    if (lic.laterExpiry(null, early) !== early) hBad.push('laterExpiry 单侧缺失处理错误')
+    if (lic.laterExpiry(null, null) !== null) hBad.push('laterExpiry 双侧缺失应返回 null')
+
+    // 6) L0 四工具均接入闸门（静态检查：import + execute 内调用）
+    const l0Dir = join(ROOT, 'tools', 'l0')
+    for (const f of ['param-matrix.mjs', 'l0-estimate.mjs', 'design-validate.mjs', 'pipeline.mjs']) {
+      const src = readFileSync(join(l0Dir, f), 'utf8')
+      if (!src.includes("from '../../lib/quota.mjs'")) hBad.push(`${f} 未 import quota`)
+      if (!/enforceQuota\(config\)/.test(src)) hBad.push(`${f} execute 未调用 enforceQuota`)
+    }
+
+    delete globalThis.fetch
+  } catch (e) {
+    hBad.push(`门禁 H 运行失败：${e.message}`)
+  }
+  if (hBad.length === 0) {
+    console.log('✅ 免费额度闸门 + 续费取 max：断网 fail-open / 用尽拦截 / 已激活跳过 / 四工具接入 全过')
+  } else {
+    console.log(`❌ 额度与续费缺陷 ${hBad.length} 项：`); hBad.forEach((l) => console.log('   ' + l)); failures++
+  }
+}
+
 // ============================================================
 // 5. 汇总
 // ============================================================

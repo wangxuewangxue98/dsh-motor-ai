@@ -32,6 +32,7 @@ import {
 } from '@wangxue98/dsh-motor-ai-core'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
 import { assessApplicability, scenarioFromMatrix } from '@wangxue98/dsh-motor-ai-core'
+import { enforceQuota } from '../../lib/quota.mjs'
 
 /** 工具入参声明 */
 export const TOOL_PARAMS = {
@@ -360,6 +361,8 @@ export async function registerL0Estimate(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args) {
+      const quotaErr = await enforceQuota(config)
+      if (quotaErr) return quotaErr.error
       const t0 = Date.now()
       try {
         const result = runL0Estimate(args, config)

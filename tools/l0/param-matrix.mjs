@@ -36,6 +36,7 @@ import {
 } from '@wangxue98/dsh-motor-ai-core'
 import { computeTorque, computeD2L, computeLambda, validateLambda, deriveElectricalClosure } from '@wangxue98/dsh-motor-ai-core'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
+import { enforceQuota } from '../../lib/quota.mjs'
 
 /** 工具入参声明（与 defineTool.parameters 保持一对一，避免两边漂移） */
 export const TOOL_PARAMS = {
@@ -490,6 +491,8 @@ export async function registerParamMatrix(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args) {
+      const quotaErr = await enforceQuota(config)
+      if (quotaErr) return quotaErr.error
       const t0 = Date.now()
       try {
         const result = buildParamMatrix(args, config)
