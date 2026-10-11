@@ -1,3 +1,18 @@
+## [1.0.0-rc.7] - 2026-10-11
+
+### Added
+- **双通道激活闭环（C 端到端）**：
+  - `lib/license.mjs` 新增 `isOnlinePasscode` / `getDeviceId` / `activateOnline` / `activateFlex`；
+    `DM-XXXX-XXXX` 服务端口令走后端 `POST /api/dsh/verify` 在线校验，成功即落盘 `tier=full` + 到期时间，
+    设备绑定 / 解绑 / 吊销 / 收入统计全部生效（此前 DM 码因插件端纯离线分支 + 正则不识别而激活必败）。
+  - `tools/activate.mjs` 自动按码形态分流：DM 在线校验、v2 离线非对称码本地验签。
+  - `scripts/verify.mjs` 新增**门禁 G**：mock fetch 覆盖 DM 在线校验 / 绑定 / device_mismatch / 离线分流四分支。
+
+### Changed
+- 后端 `app/admin_dsh.py`：`_run_gate` 按 `plugin_id` 定位仓库根（`PLUGIN_ROOTS` 映射，支持 `DSH_FULL_PLUGIN_ROOT` 覆盖），
+  新增 `_run_gate_full` 专属判据（G1 仓库完整性 / G2 版本三重一致 / G3 双通道激活代码在场 / G4 verify.mjs A–G 全过），
+  full 从此能「真」跑门禁并置 `published`（此前硬编码 l0 镜像，full 拿的是别人的合格证）。
+
 ## [1.0.0-rc.6] - 2026-10-11
 
 ### Fixed

@@ -8,6 +8,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs'
 import { join, dirname, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 
 // 获取项目根目录（scripts 的父目录）
 const __filename = fileURLToPath(import.meta.url)
@@ -327,6 +328,68 @@ try {
     console.log('✅ 入口 apply 返回值符合 cordis effect 契约（函数 / null / undefined）')
   } else {
     console.log(`❌ 入口 effect 契约缺陷 ${fBad.length} 项：`); fBad.forEach((l) => console.log('   ' + l)); failures++
+  }
+}
+
+// 门禁 G：双通道激活闭环（DM 服务端口令在线校验 + 离线 v2 非对称码不误触）
+// 事故样本：管理端「商业口令」生成 DM-XXXX-XXXX，但插件端 activate 是纯离线分支，
+// 且 license.mjs 正则 /^v(\d+):/ 不匹配 DM → 买家拿到码在 DSH 里激活必然失败，
+// 核销/绑定/解绑/收入统计永远为 0。本门禁用 mock fetch 覆盖 4 个分支，零网络依赖。
+{
+  const gBad = []
+  try {
+    const licUrl = pathToFileURL(join(ROOT, 'lib', 'license.mjs')).href
+    const lic = await import(licUrl)
+
+    // 1) 形态识别
+    if (!lic.isOnlinePasscode('DM-2RQ3-STZX')) gBad.push('isOnlinePasscode 未识别合法 DM 码')
+    if (lic.isOnlinePasscode('v2:full:x:y:0:0:sig')) gBad.push('isOnlinePasscode 误判离线码为在线码')
+    if (typeof lic.activateOnline !== 'function') gBad.push('缺 activateOnline 导出')
+    if (typeof lic.activateFlex !== 'function') gBad.push('缺 activateFlex 导出')
+    if (typeof lic.getDeviceId !== 'function') gBad.push('缺 getDeviceId 导出')
+
+    // 隔离落盘目录，避免污染真实激活态
+    const sandboxHome = join(tmpdir(), `dsh-motor-ai-verify-${process.pid}`)
+    process.env.DSH_HOME = sandboxHome
+
+    // 2) 在线校验成功分支（mock 后端返回 valid=true）
+    let mockBody = { valid: true, plan: 'yearly', expires_at: new Date(Date.now() + 365 * 86400e3).toISOString(), days_left: 365 }
+    globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => mockBody })
+    const ok = await lic.activateOnline('DM-2RQ3-STZX', { backendUrl: 'http://mock.local', deviceId: 'dev1234abcd' })
+    if (!ok.success) gBad.push(`在线校验成功分支返回失败：${ok.reason}`)
+    else {
+      const st = lic.loadActivationState()
+      if (!st || st.tier !== 'full' || st.source !== 'online' || !st.expiresAt) {
+        gBad.push(`在线激活落盘异常：tier=${st?.tier} source=${st?.source} expiresAt=${st?.expiresAt}`)
+      }
+    }
+
+    // 3) device_mismatch 分支
+    mockBody = { valid: false, reason: 'device_mismatch' }
+    const mismatch = await lic.activateOnline('DM-2RQ3-STZX', { backendUrl: 'http://mock.local', deviceId: 'dev1234abcd' })
+    if (mismatch.success) gBad.push('device_mismatch 分支竟返回成功')
+    else if (!/设备|解绑|device_mismatch/.test(mismatch.reason || '')) gBad.push(`device_mismatch 文案不匹配：${mismatch.reason}`)
+
+    // 4) 网络异常分支（offline=true，提示改用离线码）
+    globalThis.fetch = async () => { throw new Error('ECONNREFUSED') }
+    const netErr = await lic.activateOnline('DM-2RQ3-STZX', { backendUrl: 'http://mock.local', deviceId: 'dev1234abcd' })
+    if (!netErr.offline) gBad.push('网络异常分支未置 offline=true')
+
+    // 5) 分流正确性：离线码走 activate 而非 online（不应触碰 fetch）
+    let fetched = false
+    globalThis.fetch = async () => { fetched = true; return { ok: true, status: 200, json: async () => ({ valid: true }) } }
+    await lic.activateFlex('v2:full:issuer:buyer:0:0:deadbeef', {})
+    if (fetched) gBad.push('activateFlex 对离线码误走了在线 fetch')
+
+    // 还原 fetch（避免影响其他流程）
+    delete globalThis.fetch
+  } catch (e) {
+    gBad.push(`门禁 G 运行失败：${e.message}`)
+  }
+  if (gBad.length === 0) {
+    console.log('✅ 双通道激活闭环：DM 在线校验 / 绑定 / 不匹配 / 离线分流 全过')
+  } else {
+    console.log(`❌ 双通道激活缺陷 ${gBad.length} 项：`); gBad.forEach((l) => console.log('   ' + l)); failures++
   }
 }
 

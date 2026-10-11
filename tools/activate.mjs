@@ -8,7 +8,7 @@
  * 无需任何外部密钥配置即可验签放行。
  */
 
-import { activate, queryActivation, buildActivationGuide } from '../lib/license.mjs'
+import { activateFlex, getDeviceId, queryActivation, buildActivationGuide } from '../lib/license.mjs'
 
 export const ACTIVATE_TOOL_NAME = 'dsh_motor_ai_activate'
 
@@ -29,8 +29,12 @@ export async function registerActivateCommand(ctx, config = {}) {
 接收私域发放的激活码并写入本地状态。
 激活后 motor_l1_* / motor_l2_* 工具即可使用。
 
+支持两种激活码：
+  - 服务端口令（推荐，在线校验）：形如 DM-XXXX-XXXX，需联网，自动绑定本机设备。
+  - 离线非对称码：形如 v2:full:issuer:buyer:ts:exp:sig（Ed25519 签名），无需联网。
+
 参数:
-  - code: 激活码（形如 v2:full:issuer:buyer:ts:exp:sig，Ed25519 签名）
+  - code: 激活码（DM-XXXX-XXXX 或 v2:...）
   - buyer: 购买者标识（可选，覆盖激活码中的 buyer 字段）
 
 返回:
@@ -61,7 +65,13 @@ export async function registerActivateCommand(ctx, config = {}) {
         }
       }
 
-      const result = activate(code)
+      // 双通道：DM-XXXX-XXXX（服务端口令，在线校验）/ v2:...（离线非对称码）
+      const result = await activateFlex(code, {
+        secret: config?.activationHmacKey,
+        backendUrl: config?.commerceBackendUrl || process.env.DSH_BACKEND_URL,
+        deviceId: getDeviceId(),
+        buyer,
+      })
       if (result.success) {
         const state = queryActivation()
         return {

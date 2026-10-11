@@ -17,7 +17,7 @@ dsh-motor-ai-core      ← 共享核心（公式引擎、代理模型、经验�
 DSH Desktop →「添加和管理插件」→ 输入框填：
 
 ```
-dsh-motor-ai@1.0.0-rc.6
+dsh-motor-ai@1.0.0-rc.7
 ```
 
 > - **必须带 `@版本`**：安装器用 `spec.lastIndexOf('@')` 切分包名与版本，纯包名会把版本算错。
@@ -34,7 +34,7 @@ npm uninstall dsh-motor-ai-l0
 npm install dsh-motor-ai@next
 ```
 
-> **当前版本口径**：`latest` = `1.0.0-beta`；`1.0.0-rc.6` 为预发布，走 `next` 标签。
+> **当前版本口径**：`latest` = `1.0.0-beta`；`1.0.0-rc.7` 为预发布，走 `next` 标签。
 > 稳定版发布后 `@next` 可省略。
 
 ## 配置
