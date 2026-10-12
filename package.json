@@ -1,6 +1,6 @@
 {
   "name": "dsh-motor-ai",
-  "version": "1.0.0-rc.8",
+  "version": "1.0.0-rc.9",
   "description": "电机设计 L1/L2 完整版（RMxprt + Motor-CAD），依赖共享核心 @wangxue98/dsh-motor-ai-core",
   "type": "module",
   "main": "./index.mjs",

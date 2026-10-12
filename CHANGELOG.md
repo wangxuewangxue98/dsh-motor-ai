@@ -1,3 +1,21 @@
+## [1.0.0-rc.9] - 2026-10-12
+
+### Fixed
+- **版本三重一致性补全（rc.8 发布物缺陷修复）**：rc.8 bump 时漏改
+  `skills/motor-design/SKILL.md` 与 `skills/motor-l0-estimate/SKILL.md` 的
+  `metadata.version`（仍为 rc.7），导致管理端 `_run_gate_full` 的 **G2 版本三重**
+  不一致、台账无法写回 rc.8。本版将 package.json / manifest.json（顶层 + 2 skill）
+  / CHANGELOG / 2 个 SKILL.md 全部对齐到 rc.9。
+- **npm 已发布物一致性**：npm 包发布后不可覆盖，rc.8 的 tarball 内 skill 元数据
+  停留在 rc.7（纯元数据、不影响运行）。为使「源码 = 已发布物 = 台账」三方一致，
+  发布本 rc.9；发布物内所有版本标记统一为 rc.9。
+
+### 说明
+- 无运行时功能变化（rc.8 的免费额度闸门 / 双通道激活 / manifest.json 上架清单均不变）。
+- 关联：l0 免费层配额闸门已随 `dsh-motor-ai-l0@0.3.3` 落地（`lib/quota.mjs` +
+  四 L0 工具接入 + `lib/` 进 files 白名单），full 与 l0 的 `getDeviceId` 算法一致，
+  同一设备共用同一本免费额度账。
+
 ## [1.0.0-rc.8] - 2026-10-12
 
 ### Added
