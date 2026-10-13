@@ -22,7 +22,8 @@ import { buildParamMatrix } from './param-matrix.mjs'
 import { runDesignValidate } from './design-validate.mjs'
 import { runL0Estimate } from './l0-estimate.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
-import { enforceQuota } from '../../lib/quota.mjs'
+import { enforceQuota, assertFreeQuota } from '../../lib/quota.mjs'
+import { scheduleTelemetry } from '../../lib/telemetry.mjs'
 
 /** 工具入参声明（矩阵生成参数 + 聚合控制） */
 export const TOOL_PARAMS = {
@@ -63,6 +64,7 @@ export const TOOL_PARAMS = {
  * }}
  */
 export function runL0Pipeline(rawArgs, config = {}) {
+  assertFreeQuota('motor_l0_pipeline')
   const { spec: args } = normalizeSpec(rawArgs ?? {})
   const t0 = Date.now()
 
@@ -203,12 +205,14 @@ export async function registerL0Pipeline(ctx, config = {}) {
           failed: result?.summary?.failed,
           feasible: result?.summary?.feasible_count,
         })
+        scheduleTelemetry(config)
         return JSON.stringify(result, null, 2)
       } catch (err) {
         logUsage(getUsageSink(config), {
           tool: 'motor_l0_pipeline', ok: false, elapsed_ms: Date.now() - t0,
           error: String(err?.message ?? err),
         })
+        scheduleTelemetry(config)
         return JSON.stringify({ error: true, message: String(err?.message ?? err) }, null, 2)
       }
     },

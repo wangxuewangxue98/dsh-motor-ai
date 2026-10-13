@@ -4,7 +4,7 @@
  * 检查包结构、依赖、导入是否正常
  */
 
-import { readFileSync, existsSync, readdirSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { join, dirname, relative, resolve, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -395,8 +395,12 @@ try {
 
 // 门禁 H：免费额度闸门 + 续费取 max（L2 自动化闭环配套）
 // 事故样本：后端 /api/dsh/free-call 与 dsh_free_usage 表早已建好，但插件端从未调用，
-// 「每日 5 次」形同虚设；且若闸门在断网时拦截，会把已付费用户一起锁死——
-// 后者比不限流严重得多。本门禁把「fail-open」钉成不可回归的硬约束。
+// 「每日 N 次」形同虚设（旧版断网 fail-open ⇒ 插件分发后完全不限）。
+// 现行语义（离线硬限，本地权威）：
+//   · 免费档 = 本地 free-quota.json 为准，断网也拦（fail-closed）；断网不误杀未用尽用户；
+//   · 付费档 = 一律放行（fail-open），断网绝不锁死付费用户（此条比限流重要得多）；
+//   · 后端仅作旁路遥测，不参与放行决策。
+// 本门禁把「本地权威 + 免费档 fail-closed + 付费档 fail-open」钉成不可回归的硬约束。
 {
   const hBad = []
   try {
@@ -411,19 +415,29 @@ try {
     const sandboxHome = join(tmpdir(), `dsh-motor-ai-verify-h-${process.pid}`)
     process.env.DSH_HOME = sandboxHome
 
-    // 1) 断网必须 fail-open（绝不能锁死用户）
+    const qDir = join(sandboxHome, 'storages', 'dsh-motor-ai')
+    const qFile = join(qDir, 'free-quota.json')
+    const d0 = new Date()
+    const dayKey = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, '0')}-${String(d0.getDate()).padStart(2, '0')}`
+    const dailyLimit = quota.getDailyLimit()
+
+    // 1) 断网 + 本地未用尽 → 必须放行（本地计数为准，不由网络决定；绝不能锁死用户）
     globalThis.fetch = async () => { throw new Error('ECONNREFUSED') }
     const off = await quota.checkFreeQuota({ backendUrl: 'http://mock.local' })
-    if (off.allowed !== true) hBad.push(`断网未 fail-open：allowed=${off.allowed}`)
-    if (off.reason !== 'backend-unreachable-fail-open') hBad.push(`断网 reason 异常：${off.reason}`)
+    if (off.allowed !== true) hBad.push(`断网误杀免费用户：allowed=${off.allowed}`)
+    if (off.reason !== 'within-quota') hBad.push(`断网 reason 异常：${off.reason}`)
 
-    // 2) 后端明确拒绝（allowed=false）必须拦截
+    // 2) 本地额度用尽 → 即便后端说 allowed:true 也必须拦截（离线硬限 fail-closed）
+    mkdirSync(qDir, { recursive: true })
+    writeFileSync(qFile, JSON.stringify({ day: dayKey, used: dailyLimit, limit: dailyLimit }))
     globalThis.fetch = async () => ({
       ok: true, status: 200,
-      json: async () => ({ allowed: false, used: 5, remaining: 0, limit: 5 }),
+      json: async () => ({ allowed: true, used: 0, remaining: 99, limit: 99 }),
     })
     const exhausted = await quota.checkFreeQuota({ backendUrl: 'http://mock.local' })
-    if (exhausted.allowed !== false) hBad.push('额度用尽未拦截')
+    if (exhausted.allowed !== false) hBad.push('本地额度用尽未拦截（离线硬限失效）')
+    if (exhausted.reason !== 'quota-exhausted') hBad.push(`用尽 reason 异常：${exhausted.reason}`)
+    rmSync(qFile, { force: true }) // 复位，避免影响后续用例
 
     // 3) 非预期响应同样放行（fail-open 一致性）
     globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({ weird: 1 }) })
@@ -449,12 +463,85 @@ try {
     if (lic.laterExpiry(null, early) !== early) hBad.push('laterExpiry 单侧缺失处理错误')
     if (lic.laterExpiry(null, null) !== null) hBad.push('laterExpiry 双侧缺失应返回 null')
 
-    // 6) L0 四工具均接入闸门（静态检查：import + execute 内调用）
+    // 6) L0 四工具均接入闸门（静态检查：import + execute 内调用 + 内部函数硬闸植入）
     const l0Dir = join(ROOT, 'tools', 'l0')
     for (const f of ['param-matrix.mjs', 'l0-estimate.mjs', 'design-validate.mjs', 'pipeline.mjs']) {
       const src = readFileSync(join(l0Dir, f), 'utf8')
       if (!src.includes("from '../../lib/quota.mjs'")) hBad.push(`${f} 未 import quota`)
       if (!/enforceQuota\(config\)/.test(src)) hBad.push(`${f} execute 未调用 enforceQuota`)
+      // 离线硬限防绕过：内部计算函数顶部必须植入 assertFreeQuota，
+      // 否则「绕过工具网关、直调内部纯函数」可无限使用。
+      if (!/assertFreeQuota\(/.test(src)) hBad.push(`${f} 内部函数未植入 assertFreeQuota（可绕过硬限）`)
+    }
+
+    // 6b) L1/L2 付费档主力路径同样必须接入闸门（付费档 9999/天 宽松硬顶，防脚本批量刷用）；
+    //     只给 L0 计数等于漏掉付费用户的真实消耗路径。
+    for (const f of ['tools/l1/rmxprt-solve.mjs', 'tools/l2/motorcad-verify.mjs']) {
+      const src = readFileSync(join(ROOT, f), 'utf8')
+      if (!src.includes("from '../../lib/quota.mjs'")) hBad.push(`${f} 未 import quota`)
+      if (!/enforceQuota\(config\)/.test(src)) hBad.push(`${f} execute 未调用 enforceQuota`)
+    }
+
+    // 6d) L2 真 FEA（方案 Y）不得回退成占位：
+    //     - 必须保留本机 COM 直驱标识 motorcad-com-fea
+    //     - 必须保留等效电路法降级兜底 equivalent-circuit-fallback（方案 Z）
+    //     - bridge 脚本必须存在且随包发布（files 含 scripts/）
+    {
+      const l2 = readFileSync(join(ROOT, 'tools/l2/motorcad-verify.mjs'), 'utf8')
+      if (!l2.includes('motorcad-com-fea')) hBad.push('L2 丢失本机 COM 直驱标识（方案 Y 回退）')
+      if (!l2.includes('equivalent-circuit-fallback')) hBad.push('L2 丢失等效电路法降级兜底（方案 Z）')
+      if (!existsSync(join(ROOT, 'scripts', 'motorcad_bridge.py'))) {
+        hBad.push('scripts/motorcad_bridge.py 缺失（L2 COM 桥不可用）')
+      }
+      const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
+      if (!(Array.isArray(pkg.files) && pkg.files.includes('scripts/'))) {
+        hBad.push('package.json files 未包含 scripts/ → bridge 不会随包发布')
+      }
+    }
+
+    // 6e) 完整版遥测聚合（方案 B，2026-10-14）：接线不可回退
+    //     - lib/telemetry.mjs 必须导出 scheduleTelemetry/defaultTelemetryEndpoint，
+    //       聚合身份必须是 dsh-motor-ai（不是从 l0 抄来的 dsh-motor-ai-l0 残留）；
+    //     - L0 四工具 + L1/L2 五 execute 必须调用 scheduleTelemetry(config)；
+    //     - CONFIG_SCHEMA 必须声明 telemetryEnabled（否则 DSH 裁键 → 恒 undefined，
+    //       重演 backendUrl 事故）；
+    //     - opt-out 语义：telemetryEnabled=false 时 scheduleTelemetry 拒绝调度。
+    {
+      const telSrc = readFileSync(join(ROOT, 'lib', 'telemetry.mjs'), 'utf8')
+      if (!/export async function scheduleTelemetry/.test(telSrc)) hBad.push('telemetry.mjs 缺 scheduleTelemetry 导出')
+      if (!/export function defaultTelemetryEndpoint/.test(telSrc)) hBad.push('telemetry.mjs 缺 defaultTelemetryEndpoint 导出')
+      if (!telSrc.includes("plugin: meta.plugin || 'dsh-motor-ai'")) hBad.push("telemetry.mjs 聚合身份不是 dsh-motor-ai（l0 残留）")
+      if (!telSrc.includes('/api/dsh/dsh-plugins/dsh-motor-ai/usage-report')) hBad.push('telemetry.mjs 缺后端 usage-report 回退端点')
+
+      const idxSrc = readFileSync(join(ROOT, 'index.mjs'), 'utf8')
+      if (!/telemetryEnabled:/.test(idxSrc)) hBad.push('CONFIG_SCHEMA 未声明 telemetryEnabled（DSH 会裁键 → 恒 undefined）')
+      if (!/telemetryEndpoint:/.test(idxSrc)) hBad.push('CONFIG_SCHEMA 未声明 telemetryEndpoint')
+
+      const telemFiles = [
+        'tools/l0/param-matrix.mjs', 'tools/l0/l0-estimate.mjs',
+        'tools/l0/pipeline.mjs', 'tools/l0/design-validate.mjs',
+        'tools/l1/rmxprt-solve.mjs', 'tools/l2/motorcad-verify.mjs',
+      ]
+      for (const f of telemFiles) {
+        const src = readFileSync(join(ROOT, f), 'utf8')
+        if (!src.includes("from '../../lib/telemetry.mjs'")) hBad.push(`${f} 未 import telemetry`)
+        if (!/scheduleTelemetry\(config\)/.test(src)) hBad.push(`${f} execute 未调用 scheduleTelemetry(config)`)
+      }
+
+      // opt-out 功能验证：telemetryEnabled=false 必须拒绝调度
+      const tel = await import(pathToFileURL(join(ROOT, 'lib', 'telemetry.mjs')).href)
+      const offSched = await tel.scheduleTelemetry({ telemetryEnabled: false })
+      if (offSched.scheduled !== false || offSched.reason !== 'disabled') {
+        hBad.push(`telemetryEnabled=false 未退出：${JSON.stringify(offSched)}`)
+      }
+    }
+
+    // 6c) 付费档必须存在宽松硬顶（否则单账号可无限脚本化调用）
+    if (typeof quota.getPaidDailyLimit !== 'function') {
+      hBad.push('quota.mjs 缺导出 getPaidDailyLimit（付费档硬顶）')
+    }
+    if (!(quota.DEFAULT_PAID_DAILY_LIMIT > 0)) {
+      hBad.push('DEFAULT_PAID_DAILY_LIMIT 必须为正（付费档宽松硬顶）')
     }
 
     delete globalThis.fetch
@@ -462,7 +549,7 @@ try {
     hBad.push(`门禁 H 运行失败：${e.message}`)
   }
   if (hBad.length === 0) {
-    console.log('✅ 免费额度闸门 + 续费取 max：断网 fail-open / 用尽拦截 / 已激活跳过 / 四工具接入 全过')
+    console.log('✅ 免费额度闸门 + 续费取 max：断网不误杀 / 本地用尽硬拦截 / 已激活跳过 / L0+L1+L2 全接入 / 付费档硬顶 全过')
   } else {
     console.log(`❌ 额度与续费缺陷 ${hBad.length} 项：`); hBad.forEach((l) => console.log('   ' + l)); failures++
   }

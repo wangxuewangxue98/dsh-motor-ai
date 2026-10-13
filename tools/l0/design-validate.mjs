@@ -22,7 +22,8 @@ import { validateDesign, validateDesignBatch, RULE_CATALOG, ESCALATABLE_RULES }
 import { normalizeSpec } from '@wangxue98/dsh-motor-ai-core'
 import { DEFAULT_LINE_FREQ_HZ } from '@wangxue98/dsh-motor-ai-core'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
-import { enforceQuota } from '../../lib/quota.mjs'
+import { enforceQuota, assertFreeQuota } from '../../lib/quota.mjs'
+import { scheduleTelemetry } from '../../lib/telemetry.mjs'
 
 /** 工具入参声明 */
 export const TOOL_PARAMS = {
@@ -56,6 +57,7 @@ export const TOOL_PARAMS = {
  * @param {object} [config] 插件配置：{ efficiencyCap, tempRiseRange }
  */
 export function runDesignValidate(rawArgs, config = {}) {
+  assertFreeQuota('motor_design_validate')
   const { spec: args } = normalizeSpec(rawArgs ?? {})
 
   // 优先级：工具入参 > 插件配置 > 常量默认
@@ -160,12 +162,14 @@ export async function registerDesignValidate(ctx, config = {}) {
           n: args?.params_list?.length ?? (args?.params ? 1 : 0),
           failed: result?.summary?.failed, warning: result?.summary?.warning,
         })
+        scheduleTelemetry(config)
         return JSON.stringify(result, null, 2)
       } catch (err) {
         logUsage(getUsageSink(config), {
           tool: 'motor_design_validate', ok: false, elapsed_ms: Date.now() - t0,
           error: String(err?.message ?? err),
         })
+        scheduleTelemetry(config)
         return JSON.stringify({ error: true, message: String(err?.message ?? err) }, null, 2)
       }
     },

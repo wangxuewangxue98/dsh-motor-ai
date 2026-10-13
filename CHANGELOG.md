@@ -1,3 +1,23 @@
+## [Unreleased] - 2026-10-14
+
+### Added
+- **完整版插件端遥测使用聚合（方案 B 接线）**：此前 `lib/telemetry.mjs` 聚合模块
+  在仓库中但无任何工具调用（管理端「插件遥测聚合报表」恒暂无上报）。本次：
+  - `index.mjs` CONFIG_SCHEMA 补声明 `telemetryEnabled`（默认 **true**，opt-out 语义，
+    2026-10-14 决策）/ `telemetryEndpoint` / `telemetryBatchSize` / `telemetryMinIntervalMs`——
+    未声明键会被 DSH 裁掉恒 undefined（backendUrl 前车之鉴）；
+  - 新增 `scheduleTelemetry()`（fire-and-forget + 默认 60s 节流，兼容旧键
+    `telemetryIntervalSec` 秒语义）；L0 四工具 + L1 三 execute + L2 两 execute
+    全部接线（L1/L2 同时补本地 usage.jsonl 落盘，配额/授权闸放行后才计入）；
+  - `reportTelemetry()` endpoint 空时回退 `{后端}/api/dsh/dsh-plugins/dsh-motor-ai/usage-report`
+    （优先级 config.commerceBackendUrl > backendUrl > DSH_BACKEND_URL > 127.0.0.1:5000）；
+  - 聚合身份修正：payload `plugin: 'dsh-motor-ai'` / `kind: 'usage-aggregate'`
+    （原为从 l0 抄来的 `dsh-motor-ai-l0` 残留）；
+  - 合规底线不变：只上报按工具聚合的白名单统计量（次数/成败/耗时/规模/错误类别），
+    逐条明细与设计参数绝不外发；用户可置 `telemetryEnabled: false` 显式退出。
+- 测试 `tests/telemetry-aggregate.test.mjs`（42 用例）+ `scripts/verify.mjs` 门禁 6e
+  （scheduleTelemetry 导出 / 聚合身份 / CONFIG_SCHEMA 声明 / 6 工具文件接线 / opt-out 功能验证）。
+
 ## [1.0.0-rc.9] - 2026-10-12
 
 ### Fixed

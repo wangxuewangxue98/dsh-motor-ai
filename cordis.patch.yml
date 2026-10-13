@@ -35,12 +35,13 @@
         airGapFluxT: 0.8                   # 气隙磁密基准 T
         insulationClass: 'F'               # B=80K / F=105K / H=125K
         highSpeedRpm: 8000                 # 超此转速气隙上限放宽到 4mm
-        # ---- 脱敏用量回传（默认全关；白名单见 core lib/telemetry.mjs）----
+        # ---- 脱敏聚合遥测（完整版默认开，2026-10-14）----
         # 只回传「按工具聚合的次数/成败/耗时/规模」，不含设计参数/结果/提示词/路径/密钥。
-        telemetryEnabled: false            # 总开关（boolean）；默认关闭
-        telemetryEndpoint: ''              # POST 目标；空 = 不启用
+        # endpoint 空 = 回退 {后端}/api/dsh/dsh-plugins/dsh-motor-ai/usage-report。
+        telemetryEnabled: true             # 总开关（boolean）；完整版默认开，置 false 显式退出
+        telemetryEndpoint: ''              # POST 目标；空 = 回退后端 usage-report 通道
         telemetryBatchSize: 50
-        telemetryIntervalSec: 300
+        telemetryMinIntervalMs: 60000      # 上报尝试最小间隔（0=不节流；兼容旧键 telemetryIntervalSec）
         sessionTelemetry: 'auto'           # auto = 顺带挂 DSH sessionTelemetry
         # ---- 脱敏设计经验回传（默认关闭；用于 L0 代理重训）----
         designExperienceUpload: false

@@ -19,7 +19,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile, unlink } from 'node:fs/promises'
-import { queryActivation, isLevelAllowed, buildActivationGuide } from '../../lib/license.mjs'
+import { getL1L2License, buildActivationGuide } from '../../lib/license.mjs'
+import { enforceQuota } from '../../lib/quota.mjs'
+import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
+import { scheduleTelemetry } from '../../lib/telemetry.mjs'
 
 /** L1 工具名列表 */
 export const L1_TOOL_NAMES = [
@@ -28,13 +31,21 @@ export const L1_TOOL_NAMES = [
   'motor_rmxprt_solve',
 ]
 
-/** 激活检查钩子：L1 工具调用前必须通过此检查 */
-function checkActivation() {
-  const { active, tier } = queryActivation()
-  if (!active || !isLevelAllowed('l1')) {
-    return buildActivationGuide('l1')
+/** L1 门控钩子（B 方案在线门控）：后端在线态权威 + 本地离线宽限。
+ *  返回 { authorized, stale?, reason?, tier? }；authorized=false 时即 L1 引导体（status:requires_activation）。 */
+async function checkL1License(meta = {}) {
+  const st = await getL1L2License('l1', {
+    hardOffline: meta.hardOffline,
+    backendUrl: meta.backendUrl,
+  })
+  if (!st.authorized) {
+    const g = buildActivationGuide('l1')
+    g.stale = !!st.stale
+    g.reason = st.reason
+    g.tier = st.tier
+    return g
   }
-  return null // null = 通过，可继续执行
+  return st
 }
 
 /**
@@ -187,9 +198,14 @@ export async function registerL1Estimate(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(params, meta) {
+      const __t0 = Date.now()
       const __run = async () => {
-      const actCheck = checkActivation()
-      if (actCheck) return actCheck
+      const actCheck = await checkL1License(meta)
+      if (actCheck && !actCheck.authorized) return actCheck
+
+      // 每日额度闸（免费档 10 次/天；付费档 9999 次/天宽松硬顶，防脚本滥用）
+      const quotaErr = await enforceQuota(config)
+      if (quotaErr) return { status: 'error', level: 'l1', error: quotaErr.error, quota: quotaErr.quota }
 
       const { spec, geo, motorType: mt } = params
       const resolvedType = mt || resolveMotorType(meta?.motorType || 'pmsm')
@@ -222,7 +238,17 @@ export async function registerL1Estimate(ctx, config = {}) {
         }
       }
       }
-      return JSON.stringify(await __run(), null, 2)
+      // 遥测聚合：配额闸（quota）/授权闸（authorized）放行后的调用才计入
+      const __res = await __run()
+      if (__res && __res.quota === undefined && __res.authorized !== false) {
+        logUsage(getUsageSink(config), {
+          tool: 'motor_l1_estimate', ok: __res.status === 'success',
+          elapsed_ms: Date.now() - __t0,
+          error: __res.status === 'success' ? undefined : String(__res.error ?? 'unknown'),
+        })
+        scheduleTelemetry(config)
+      }
+      return JSON.stringify(__res, null, 2)
     },
   })
 
@@ -260,9 +286,14 @@ export async function registerL1Pipeline(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(params) {
+      const __t0 = Date.now()
       const __run = async () => {
-      const actCheck = checkActivation()
-      if (actCheck) return actCheck
+      const actCheck = await checkL1License({})
+      if (actCheck && !actCheck.authorized) return actCheck
+
+      // 每日额度闸（免费档 10 次/天；付费档 9999 次/天宽松硬顶，防脚本滥用）
+      const quotaErr = await enforceQuota(config)
+      if (quotaErr) return { status: 'error', level: 'l1', error: quotaErr.error, quota: quotaErr.quota }
 
       const { candidates, topN = 5, sortBy = 'efficiency' } = params
 
@@ -319,7 +350,19 @@ export async function registerL1Pipeline(ctx, config = {}) {
         },
       }
       }
-      return JSON.stringify(await __run(), null, 2)
+      // 遥测聚合：配额闸（quota）/授权闸（authorized）放行后的调用才计入
+      const __res = await __run()
+      if (__res && __res.quota === undefined && __res.authorized !== false) {
+        logUsage(getUsageSink(config), {
+          tool: 'motor_l1_pipeline', ok: __res.status === 'success',
+          elapsed_ms: Date.now() - __t0,
+          n: __res.stats?.selected ?? 0,
+          success: __res.stats?.success, failed: __res.stats?.failed,
+          error: __res.status === 'success' ? undefined : String(__res.error ?? 'unknown'),
+        })
+        scheduleTelemetry(config)
+      }
+      return JSON.stringify(__res, null, 2)
     },
   })
   
@@ -356,9 +399,14 @@ export async function registerRmxprtSolve(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(params) {
+      const __t0 = Date.now()
       const __run = async () => {
-      const actCheck = checkActivation()
-      if (actCheck) return actCheck
+      const actCheck = await checkL1License({})
+      if (actCheck && !actCheck.authorized) return actCheck
+
+      // 每日额度闸（免费档 10 次/天；付费档 9999 次/天宽松硬顶，防脚本滥用）
+      const quotaErr = await enforceQuota(config)
+      if (quotaErr) return { status: 'error', level: 'l1', error: quotaErr.error, quota: quotaErr.quota }
 
       const { design, options = {} } = params
 
@@ -387,7 +435,17 @@ export async function registerRmxprtSolve(ctx, config = {}) {
         }
       }
       }
-      return JSON.stringify(await __run(), null, 2)
+      // 遥测聚合：配额闸（quota）/授权闸（authorized）放行后的调用才计入
+      const __res = await __run()
+      if (__res && __res.quota === undefined && __res.authorized !== false) {
+        logUsage(getUsageSink(config), {
+          tool: 'motor_rmxprt_solve', ok: __res.status === 'success',
+          elapsed_ms: Date.now() - __t0,
+          error: __res.status === 'success' ? undefined : String(__res.error ?? 'unknown'),
+        })
+        scheduleTelemetry(config)
+      }
+      return JSON.stringify(__res, null, 2)
     },
   })
   

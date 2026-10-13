@@ -32,7 +32,8 @@ import {
 } from '@wangxue98/dsh-motor-ai-core'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
 import { assessApplicability, scenarioFromMatrix } from '@wangxue98/dsh-motor-ai-core'
-import { enforceQuota } from '../../lib/quota.mjs'
+import { enforceQuota, assertFreeQuota } from '../../lib/quota.mjs'
+import { scheduleTelemetry } from '../../lib/telemetry.mjs'
 
 /** 工具入参声明 */
 export const TOOL_PARAMS = {
@@ -71,6 +72,7 @@ function sortKey(row, sortBy) {
  * @param {object} [config] 插件配置：{ efficiencyCap, tempRiseRange, topNPreview, l0Mode, surrogatePath, surrogateConfidenceThreshold }
  */
 export function runL0Estimate(rawArgs, config = {}) {
+  assertFreeQuota('motor_l0_estimate')
   const { spec: args } = normalizeSpec(rawArgs)
   const paramsList = Array.isArray(args.params_list) ? args.params_list : []
   const sortBy = SORTABLE_FIELDS.includes(args.sort_by) ? args.sort_by : 'efficiency'
@@ -128,14 +130,25 @@ export function runL0Estimate(rawArgs, config = {}) {
       // v2.0.0: 推理端注入 l0_eff (公式通道可算的物理基, 非 RMxprt 输出)
       //   训练特征含 l0_eff 但 params 矩阵不含该字段 -> 用 quickL0Estimate 补算后注入;
       //   实测 Python/Node 两套公式仅差 ~0.5pp, 口径一致可安全复用。
+      // P3: 同时注入 torque 目标特征 power_kw/speed_rpm —— 矩阵行（L1_MATRIX_FIELDS）
+      //   只有 speed 无 power_kw，缺任一则 predictTorqueTarget 提取失败 → 静默降级（T1 失效）。
+      //   speed_rpm 直取 row.speed；power_kw 由规格 torque_nm×speed/9550 反算（与训练侧
+      //   specs.power_kw 同源口径）。
       const enriched = paramsList.map((row) => {
+        const out = { ...row }
+        if (out.speed_rpm == null && Number(out.speed) > 0) {
+          out.speed_rpm = Number(out.speed)
+        }
+        if (out.power_kw == null && Number(out.torque_nm) > 0 && Number(out.speed) > 0) {
+          out.power_kw = Math.round((Number(out.torque_nm) * Number(out.speed) / 9550) * 100) / 100
+        }
         try {
           const l0 = quickL0Estimate(row, { ...estimateOpts(row), efficiencyCap: 99 })
           if (l0 && typeof l0.efficiency === 'number') {
-            return { ...row, l0_eff: l0.efficiency }
+            out.l0_eff = l0.efficiency
           }
         } catch (_) { /* 公式失败则该行在代理通道降级公式 */ }
-        return row
+        return out
       })
 
       const { results: predictions, fallbacks } = predictBatch(
@@ -313,17 +326,24 @@ export function runL0Estimate(rawArgs, config = {}) {
     efficiency_cap: efficiencyCap,
     efficiency_capped_count: cappedCount,
     efficiency_note: efficiencyNote,
-    // ---- v0.2.5 转矩口径声明（P0）----
-    // L0 不预测转矩。矩阵行的 _physics.estimated_torque 是「按 D²L 几何类比外推的可达转矩」，
-    // 与 target_torque（9550·P/n，用户规格）是不同物理量，差一个 D²L 比例。
-    // 交接给 RMxprt 时必须用 specs[].torque_nm（规格），不得用 estimated_torque 当规格。
+    // ---- 方案生成阶段 P4/P5 转矩口径声明（双字段）----
+    // 扭矩由解算器 l0TorqueEstimate 统一产出，分两类物理量字段：
+    //   期望输出（排序口径）: torque / torque_density / torque_source / torque_confidence
+    //     spec → 9550·P/n 恒等式 → 无 P/n 时以可达能力兜底
+    //   可达能力（可行性口径）: torque_capability / capability_source / capability_confidence
+    //     代理 T1（env DSH_L0_SURROGATE_TORQUE=on 才激活）→ D²L(T2) → 切向应力(T2b)
+    // 交接给 RMxprt 时必须用 specs[].torque_nm（spec 级），不得把 capability 级 torque 当规格。
     torque_contract: {
-      basis: 'analogy_d2l',
+      basis: 'dual_field_resolver',
+      resolver: 'lib/torque-resolver.mjs#l0TorqueEstimate',
+      surrogate_env_switch: 'DSH_L0_SURROGATE_TORQUE',
+      expected_field: { name: 'torque', tiers: ['spec', 'power_speed(9550·P/n)', 'capability_fallback'], purpose: '排序/期望输出' },
+      capability_field: { name: 'torque_capability', tiers: ['surrogate(T1,env门控)', 'd2l(T2)', 'stress(T2b)', 'unavailable'], purpose: '可行性/可达能力' },
       spec_field: 'torque_nm',
       spec_formula: '9550·P(kW)/n(rpm)',
-      analogy_field: '_physics.estimated_torque',
-      analogy_formula: 'torque_nm × (D²L)/(D²L_base)',
-      warning: 'estimated_torque 是几何类比外推量，不是规格承诺；当作规格使用会导致转矩静默违约',
+      geometric_estimate: 'T=(π/2)·Bδ·A·D²·L·kw·kFe·kSat  (方法2 D²L 电磁负荷)',
+      warning: 'capability 级 torque（代理/D²L/切向应力）是可达能力估算量，不是规格承诺；当作规格交接 RMxprt 会导致转矩静默违约。仅 spec 级 torque_nm 可作 RMxprt 规格。',
+      warning: '代理(surrogate)/几何(D²L/切向应力)扭矩是可达转矩估算量，不是规格承诺；当作规格交接 RMxprt 会导致转矩静默违约。仅 spec 级 torque_nm 可作 RMxprt 规格。',
     },
     sorted_by: sortBy,
     sort_order: ascending ? 'asc' : 'desc',
@@ -372,6 +392,7 @@ export async function registerL0Estimate(ctx, config = {}) {
           success: result?.success, failed: result?.failed,
           sort_by: args?.sort_by, top_n: args?.top_n,
         })
+        scheduleTelemetry(config)
         // 设计经验脱敏回传（并行第二通道，默认关闭）：
         //   开启 designExperienceUpload 时，对本次返回的 TopN 结果裁 design_exp
         //   （规格+几何+结论+误差带，已脱敏白名单）落本地 experience.jsonl，
@@ -393,6 +414,7 @@ export async function registerL0Estimate(ctx, config = {}) {
           tool: 'motor_l0_estimate', ok: false, elapsed_ms: Date.now() - t0,
           error: String(err?.message ?? err),
         })
+        scheduleTelemetry(config)
         return JSON.stringify({ error: true, message: String(err?.message ?? err) }, null, 2)
       }
     },

@@ -7,3 +7,13 @@ activation-keys.json
 .secrets/
 # 发布与变现计划（含定价策略、私域渠道、激活机制设计）——仅本地参考，绝不公开/入库
 PUBLISH_AND_MONETIZATION_PLAN.md
+# ---- 本地临时/衍生物（不入库；也不在 package.json files 白名单内，不会随包发布）----
+# 金数据渠道集成验证脚本（读 env 取密钥，临时 probe，成品在 D:\MotorDesign）
+server/
+# 代理模型族备份（2.3MB 历史副本；正式产物 models/l0_surrogate_family.json 入库）
+models/backup/
+# Python 字节码缓存
+__pycache__/
+scripts/__pycache__/
+# P3 临时校验脚本（一次性，结论已并入 formula-engine）
+_verify_p3_*.mjs

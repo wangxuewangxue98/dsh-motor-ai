@@ -139,6 +139,29 @@ const CONFIG_SCHEMA = {
       default: '',
       description: '验签公钥 PEM 覆盖（缺省用 lib/license.mjs 内置公钥；仅密钥轮换或测试时填，覆盖 ACTIVATION_PUBLIC_KEY_PEM）',
     },
+    // ---- 脱敏聚合遥测（完整版默认开，2026-10-14）----
+    // 只上报「按工具聚合的白名单统计量」（次数/成败/耗时/规模），不含设计参数正文。
+    // 必须在此声明：DSH 会裁掉 schema 未声明的键（backendUrl 恒 undefined 的前车之鉴）。
+    telemetryEnabled: {
+      type: 'boolean',
+      default: true,
+      description: '脱敏聚合遥测总开关（默认开；置 false 显式退出）。白名单见 lib/telemetry.mjs',
+    },
+    telemetryEndpoint: {
+      type: 'string',
+      default: '',
+      description: '聚合遥测 POST 目标；空 = 回退 {后端}/api/dsh/dsh-plugins/dsh-motor-ai/usage-report',
+    },
+    telemetryBatchSize: {
+      type: 'number',
+      default: 50,
+      description: '每批最多上报的 usage 记录条数（offset 按实际发送推进）',
+    },
+    telemetryMinIntervalMs: {
+      type: 'number',
+      default: 60000,
+      description: '两次上报尝试之间的最小间隔毫秒（0 = 不节流；兼容旧键 telemetryIntervalSec 秒语义）',
+    },
     // ... 其他配置项可继承自 core
   },
 }
