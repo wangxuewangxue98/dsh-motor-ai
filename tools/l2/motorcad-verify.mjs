@@ -18,7 +18,7 @@ import { existsSync } from 'node:fs'
 import { join as joinPath, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
-import { getL1L2License, buildActivationGuide } from '../../lib/license.mjs'
+import { getL1L2License, buildActivationGuide, CONTACT_EMAIL } from '../../lib/license.mjs'
 import { enforceQuota } from '../../lib/quota.mjs'
 import { probeL2, buildEnvGuide } from '../../lib/env-probe.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
@@ -45,6 +45,89 @@ export const MOTORCAD_PARAM_CANDIDATES = {
   voltage: ['Supply_Voltage', 'DCBusVoltage'],
   peak_current: ['PeakCurrent'],
   dc_bus_voltage: ['DCBusVoltage'],
+  // 齿宽（网格化关键，历史 BUG11：450kW 实机 677mm/18 槽时齿宽与模板默认值
+  // 不自洽 → DoMagneticCalculation 报 "Failed to mesh"。必须允许显式透传）
+  tooth_width: ['Tooth_Width'],
+}
+
+/**
+ * 网格化自洽预检（历史 BUG11 防线）。
+ * 注意：齿宽物理上无法由外径/槽数唯一推导（齿距 π·Dsi/Qs 只是上界，
+ * 具体齿宽取决于槽形设计）——因此这里**不做伪造推导**，只做两类可靠判定：
+ *   1. 缺 tooth_width 且给了外径/内径+槽数 → 警告（齿宽保持模板默认值，
+ *      可能不自洽导致 Failed to mesh，建议显式提供）；
+ *   2. 给了 tooth_width 且能算齿距 → 几何不可能性校验（齿宽 ≥ 齿距必失败）。
+ * @param {object} design 设计对象（含 slots/stator_od/stator_bore/tooth_width 或 Motor-CAD 原名）
+ * @returns {{ warnings: string[], checked: object }}
+ */
+export function buildMeshPrecheck(design = {}) {
+  const d = design || {}
+  const pick = (...keys) => {
+    for (const k of keys) {
+      const v = Number(d[k])
+      if (Number.isFinite(v) && v > 0) return v
+    }
+    return null
+  }
+  const slots = pick('slots', 'Qs', 'Slot_Number', 'Slots')
+  const od = pick('stator_od', 'Stator_Lam_Dia', 'Stator_Lamination_Dia')
+  const bore = pick('stator_bore', 'Stator_Bore')
+  const tooth = pick('tooth_width', 'Tooth_Width')
+  const warnings = []
+  if (tooth == null && (od != null || bore != null) && slots != null) {
+    warnings.push(
+      '缺 tooth_width（Tooth_Width）：齿宽将保持 .mot 模板默认值，可能与外径/槽数不自洽，' +
+      '导致 DoMagneticCalculation 报 "Failed to mesh"（历史 BUG11）。建议显式提供 tooth_width。'
+    )
+  }
+  if (tooth != null && bore != null && slots != null) {
+    const pitch = (Math.PI * bore) / slots
+    if (tooth >= pitch) {
+      warnings.push(
+        `tooth_width=${tooth} ≥ 齿距 π×Dsi/Qs=${pitch.toFixed(1)}mm（Dsi=${bore}, Qs=${slots}）：` +
+        '几何不可能，网格化必失败，请核对齿宽与槽数。'
+      )
+    }
+  }
+  return { warnings, checked: { tooth_width: tooth, stator_bore: bore, stator_od: od, slots } }
+}
+
+/** 额定功率提取（W）：L0/L2 设计对象的常用字段名穷举（含 spec 嵌套与 kW 变体） */
+export function extractRatedPowerW(design = {}) {
+  const srcs = [design, design?.spec, design?.rated].filter(Boolean)
+  for (const s of srcs) {
+    for (const k of ['rated_power', 'rated_power_w', 'power', 'power_w', 'P_N', 'pn', 'Pn']) {
+      const v = Number(s?.[k])
+      if (Number.isFinite(v) && v > 0) return v
+    }
+  }
+  for (const s of srcs) {
+    for (const k of ['rated_power_kw', 'power_kw']) {
+      const v = Number(s?.[k])
+      if (Number.isFinite(v) && v > 0) return v * 1000
+    }
+  }
+  return null
+}
+
+/**
+ * L2 失败分支统一"反馈动作"字段：任何失败都告诉用户"找谁 + 带什么信息"。
+ * 背景：分发机器常处于失联状态（后端不可达），邮件是唯一回传通道；
+ * 之前仅"未激活/配额用尽"两条路径带邮箱，L2 运行期失败全路径零覆盖。
+ * @param {object} [err] 捕获到的错误（可空）
+ * @returns {{ contact: string, how: string[] }}
+ */
+export function buildL2ReportField(err = null) {
+  const tail = err ? [`出错原因（reason）：${err.reason || 'unknown'}`] : []
+  return {
+    contact: CONTACT_EMAIL,
+    how: [
+      '1. 附上本返回中失败字段全文（error / com_error / com_reason / missing / guide）',
+      '2. 运行 motor_env_check，附上体检报告文本',
+      '3. 用上述邮箱联系作者，标题注明「dsh-motor-ai L2 反馈」',
+      ...tail,
+    ],
+  }
 }
 
 /** 把设计对象展开成 {MotorCAD变量名: 值}（含全部候选名） */
@@ -155,6 +238,7 @@ export class MotorCADSession {
     this._result = null
     this._python = null
     this._timeoutMs = Number(opts.timeoutMs || 600000)
+    this._ratedPowerW = Number(opts.ratedPowerW || 0) || null
   }
 
   /** 环境自检（ping）：确认 python+pywin32+Motor-CAD 齐全 */
@@ -239,6 +323,7 @@ export class MotorCADSession {
       run_thermal: this._opts.runThermal !== false,
       save_to: this._opts.saveTo || '',
       progid: this._opts.progid || 'MotorCAD.AppAutomation',
+      rated_power_w: this._ratedPowerW || 0,
     }, this._timeoutMs)
     if (!body || body.ok !== true) {
       const e = new Error(body?.error || 'Motor-CAD 求解失败')
@@ -426,7 +511,9 @@ export async function registerMotorCADVerify(ctx, config = {}) {
           message: guide.message,
           missing: guide.missing,
           probe: guide.probe,
+          action: guide.action,
           guide: guide.guide,
+          report: buildL2ReportField(),
         }
       }
 
@@ -435,6 +522,10 @@ export async function registerMotorCADVerify(ctx, config = {}) {
       if (quotaErr) return { status: 'error', level: 'l2', error: quotaErr.error, quota: quotaErr.quota }
 
       const { design, template } = params
+
+      // 网格化自洽预检（历史 BUG11 防线）：缺齿宽/齿宽≥齿距都提前警告
+      const mesh = buildMeshPrecheck(design)
+      const ratedPowerW = extractRatedPowerW(design)
 
       // ---- 方案 Y：本机 COM 直驱 ----
       const mode = config.motorcadMode || 'com'
@@ -449,6 +540,7 @@ export async function registerMotorCADVerify(ctx, config = {}) {
         timeoutMs: Number(config.motorcadTimeoutMs || 600000),
         runEmag: config.runEmag !== false,
         runThermal: config.runThermal !== false,
+        ratedPowerW,
       })
 
       try {
@@ -472,6 +564,10 @@ export async function registerMotorCADVerify(ctx, config = {}) {
           electromagnetic: res.emag || {},
           thermal: res.thermal || {},
           applied_params: res.applied_params || {},
+          mesh_precheck: mesh,
+          rated_power_w: ratedPowerW,
+          result_trusted: res.result_trusted ?? null,
+          result_warning: res.result_warning || [],
           solveTime: res.solve_time ?? null,
           thermal_return: res.thermal_return ?? null,
           emag_return: res.emag_return ?? null,
@@ -479,6 +575,7 @@ export async function registerMotorCADVerify(ctx, config = {}) {
           notes: [
             '本结果为 Motor-CAD COM 2D FEA 真实求解（非等效电路估算）',
             '变量名以白名单读取，未读取的变量不代表不存在（防 COM 挂起）',
+            'return=0 ≠ 结果可信：result_trusted=false 时请以 result_warning 为准，勿直接采信功率/效率数值',
           ],
         }
       } catch (err) {
@@ -500,6 +597,7 @@ export async function registerMotorCADVerify(ctx, config = {}) {
             level: 'l2',
             method: 'equivalent-circuit-fallback',
             design,
+            mesh_precheck: mesh,
             com_error: err.message,
             com_reason: err.reason || 'unknown',
             l0_estimate: l0,
@@ -511,6 +609,7 @@ export async function registerMotorCADVerify(ctx, config = {}) {
               : err.reason === 'timeout'
                 ? 'Motor-CAD 求解超时（电磁分析约 190-200s），可增大 motorcadTimeoutMs 后重试。'
                 : '请检查 Motor-CAD ActiveX 注册模式（默认设置 → 控件注册 → 单客户端设置）。',
+            report: buildL2ReportField(err),
           }
         }
 
@@ -519,8 +618,10 @@ export async function registerMotorCADVerify(ctx, config = {}) {
           tool: 'motor_motorcad_verify',
           level: 'l2',
           design,
+          mesh_precheck: mesh,
           error: err.message,
           reason: err.reason || 'unknown',
+          report: buildL2ReportField(err),
         }
       }
       }

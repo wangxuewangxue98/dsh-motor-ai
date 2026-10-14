@@ -50,7 +50,8 @@
     "motor_l2_validate",
     "motor_motorcad_verify",
     "motor_design_validate",
-    "motor_env_check"
+    "motor_env_check",
+    "motor_report_issue"
   ],
   "requires": {
     "plugins": [

@@ -562,6 +562,7 @@ try {
           'tools/l0/param-matrix.mjs', 'tools/l0/l0-estimate.mjs',
           'tools/l0/pipeline.mjs', 'tools/l0/design-validate.mjs',
           'tools/l1/rmxprt-solve.mjs', 'tools/l2/motorcad-verify.mjs',
+          'tools/report-issue.mjs',
         ]
         const read = new Set()
         for (const f of scanFiles) {
@@ -649,6 +650,55 @@ try {
       if (guide.guide.nextSteps.some((s, i) => !s.startsWith(`${i + 1}.`))) {
         hBad.push('buildEnvGuide nextSteps 编号不连续')
       }
+    }
+
+    // 6h) P0 反馈联系束 + P0 齿宽/sanity 束（rc.13，不可回退）
+    //     反馈束：L2 三失败分支 report 字段 + env-not-ready 回传 action 邮箱
+    //             + formatProbeReport 联系行 + motor_report_issue 工具注册。
+    //     齿宽/sanity 束：tooth_width 映射 + 网格化预检（BUG11 防线）
+    //             + bridge _sanity_gate（return=0≠可信防线，额定功率比对）。
+    {
+      const l2src = readFileSync(join(ROOT, 'tools', 'l2', 'motorcad-verify.mjs'), 'utf8')
+      if (!/action: guide\.action/.test(l2src)) hBad.push('L2 env-not-ready 分支未回传 action（联系邮箱被丢弃）')
+      if (!l2src.includes('buildL2ReportField')) hBad.push('L2 缺统一 report 反馈字段构建器')
+      const repCount = (l2src.match(/report: buildL2ReportField\(/g) || []).length
+      if (repCount !== 3) hBad.push(`L2 report 字段接线数=${repCount}（应为 3：env_not_ready/fallback/error）`)
+      if (!l2src.includes("tooth_width: ['Tooth_Width']")) hBad.push('MOTORCAD_PARAM_CANDIDATES 缺 tooth_width 映射（BUG11 防线）')
+      if (!l2src.includes('export function buildMeshPrecheck')) hBad.push('缺 buildMeshPrecheck 网格化预检')
+      if (!l2src.includes('export function extractRatedPowerW')) hBad.push('缺 extractRatedPowerW（sanity 门额定功率来源）')
+      if (!/rated_power_w: this\._ratedPowerW \|\| 0/.test(l2src)) hBad.push('bridge payload 未携带 rated_power_w')
+      const epsrc = readFileSync(join(ROOT, 'lib', 'env-probe.mjs'), 'utf8')
+      if (!epsrc.includes('CONTACT_EMAIL')) hBad.push('env-probe.mjs 未接入联系邮箱（formatProbeReport 联系行）')
+      const pysrc = readFileSync(join(ROOT, 'scripts', 'motorcad_bridge.py'), 'utf8')
+      if (!pysrc.includes('def _sanity_gate')) hBad.push('bridge 缺 _sanity_gate（return=0≠可信防线）')
+      if (!pysrc.includes('result_warning') || !pysrc.includes('result_trusted')) hBad.push('bridge sanity 门未写 result_warning/result_trusted')
+      if (!pysrc.includes('rated_power_w')) hBad.push('bridge 未消费 rated_power_w')
+      const risrc = readFileSync(join(ROOT, 'tools', 'report-issue.mjs'), 'utf8')
+      if (!risrc.includes("REPORT_ISSUE_TOOL_NAME = 'motor_report_issue'")) hBad.push('report-issue 工具名不是 motor_report_issue')
+      const idxSrc3 = readFileSync(join(ROOT, 'index.mjs'), 'utf8')
+      if (!idxSrc3.includes("from './tools/report-issue.mjs'")) hBad.push('index.mjs 未 import registerReportIssue')
+      if (!/await registerReportIssue\(ctx, config\)/.test(idxSrc3)) hBad.push('registerAll 未调用 registerReportIssue')
+      const manifest2 = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'))
+      if (!Array.isArray(manifest2.tools) || !manifest2.tools.includes('motor_report_issue')) {
+        hBad.push('manifest.json tools 未声明 motor_report_issue')
+      }
+      // 功能验证（纯本地、不发网络请求）：mesh 预检三态 + 额定功率提取 + 反馈稿组装
+      const l2mod = await import(pathToFileURL(join(ROOT, 'tools', 'l2', 'motorcad-verify.mjs')).href)
+      const meshMissing = l2mod.buildMeshPrecheck({ stator_od: 677, slots: 18 })
+      if (!meshMissing.warnings.length) hBad.push('buildMeshPrecheck 缺齿宽场景未告警（BUG11 防线失效）')
+      const meshBad = l2mod.buildMeshPrecheck({ stator_bore: 600, slots: 18, tooth_width: 120 })
+      if (!meshBad.warnings.length) hBad.push('buildMeshPrecheck 齿宽≥齿距场景未告警')
+      const meshOk = l2mod.buildMeshPrecheck({ stator_od: 677, slots: 18, tooth_width: 21 })
+      if (meshOk.warnings.length) hBad.push('buildMeshPrecheck 合理齿宽误报: ' + meshOk.warnings.join(';'))
+      if (l2mod.extractRatedPowerW({ spec: { rated_power: 450000 } }) !== 450000) hBad.push('extractRatedPowerW spec 嵌套提取失败')
+      if (l2mod.extractRatedPowerW({ power_kw: 450 }) !== 450000) hBad.push('extractRatedPowerW kW 变体提取失败')
+      if (l2mod.extractRatedPowerW({ stator_od: 677 }) !== null) hBad.push('extractRatedPowerW 无功率字段应返回 null')
+      const riMod = await import(pathToFileURL(join(ROOT, 'tools', 'report-issue.mjs')).href)
+      const issueText = await riMod.buildIssueReport({ errorSummary: '测试报错', toolName: 'motor_motorcad_verify' })
+      if (!issueText.includes('13546196530@163.com') || !issueText.includes('== dsh-motor-ai 问题反馈稿 ==')) {
+        hBad.push('buildIssueReport 输出缺邮箱/标题')
+      }
+      if (/v2:[A-Za-z0-9+/_-]{20,}/.test(issueText)) hBad.push('反馈稿疑似泄漏激活码密文（激活态摘要不得含激活码本体）')
     }
 
     // 6c) 付费档必须存在宽松硬顶（否则单账号可无限脚本化调用）

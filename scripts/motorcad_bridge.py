@@ -330,6 +330,39 @@ def action_ping(req):
     })
 
 
+def _sanity_gate(emag, rated_w):
+    """解算结果 sanity 门（历史 v3 事故防线）。
+
+    背景：450kW 实机 L2 曾出现电流/电压路径未同步时 DoMagneticCalculation
+    仍 return=0，但读回 InputPower=24.9MW / 效率 0.51% 的垃圾值——
+    **return=0 ≠ 结果可信**。本门在读回功率后与额定功率比对：
+      1. 计算效率 < 10%  → 判定数值不可信；
+      2. InputPower > 额定×10 → 判定电流路径未同步。
+    异常时写 result_warning + result_trusted=False，上层不得静默采信。
+    """
+    warnings = []
+    if not isinstance(emag, dict):
+        return warnings
+    inp = emag.get("InputPower")
+    out = emag.get("OutputPower")
+    eff = None
+    if (isinstance(inp, (int, float)) and inp > 0
+            and isinstance(out, (int, float)) and out >= 0):
+        eff = out / inp * 100
+        emag["Efficiency_Calculated"] = eff
+    if eff is not None and eff < 10.0:
+        warnings.append(
+            f"计算效率 {eff:.2f}% < 10%：电流/电压路径可能未同步"
+            f"（return=0≠结果可信），本次功率/效率数值不可信"
+        )
+    if (rated_w and isinstance(inp, (int, float)) and inp > rated_w * 10):
+        warnings.append(
+            f"InputPower {inp:.4g}W 超过额定 {rated_w:.4g}W 的 10 倍："
+            f"电流路径可能未同步，本次数值不可信"
+        )
+    return warnings
+
+
 def action_verify(req):
     exe, inst = _find_exe(req.get("exe_path", ""), req.get("install_dir", ""))
     if not exe:
@@ -395,11 +428,18 @@ def action_verify(req):
                     v = _get(mc, name, set(EMAG_RESULT_VARS))
                     if v is not None:
                         result["emag"][name] = v
-                # 效率需计算（无直接变量）
-                inp = result["emag"].get("InputPower")
-                out = result["emag"].get("OutputPower")
-                if inp and inp > 0:
-                    result["emag"]["Efficiency_Calculated"] = out / inp * 100
+                # 效率 + sanity 门（return=0≠可信；异常时 result_warning/result_trusted=False）
+                try:
+                    sw = _sanity_gate(result.get("emag") or {},
+                                      float(req.get("rated_power_w") or 0))
+                    if sw:
+                        result["result_warning"] = sw
+                        result["result_trusted"] = False
+                    else:
+                        result["result_trusted"] = True
+                except Exception as _se:
+                    logger.warning(f"sanity gate 自身异常(忽略): {_se}")
+                    result["result_trusted"] = None
             except Exception as e:
                 result["emag_error"] = str(e)
 

@@ -21,6 +21,7 @@ import {
 } from '@wangxue98/dsh-motor-ai-core'
 import { registerL0Tools, L0_TOOL_NAMES } from './tools/l0/index.mjs'
 import { registerEnvCheck, ENV_CHECK_TOOL_NAME } from './tools/env-check.mjs'
+import { registerReportIssue, REPORT_ISSUE_TOOL_NAME } from './tools/report-issue.mjs'
 
 // L1/L2 占位工具注册器（后续实现）
 import { registerL1Placeholders } from './tools/l1/index.mjs'
@@ -49,6 +50,8 @@ export const ALL_TOOL_NAMES = [
   // L2 占位
   'motor_l2_validate',
   'motor_motorcad_verify',
+  // 反馈（免费、无门控——问题回流通道）
+  'motor_report_issue',
 ]
 
 // ============================================================
@@ -95,6 +98,11 @@ export async function registerAll(ctx, config = {}) {
   // 环境体检工具始终注册（免费、不占配额——自检/自救通道，见 tools/env-check.mjs 设计决策）
   await registerEnvCheck(ctx, config)
   registered.push(ENV_CHECK_TOOL_NAME)
+
+  // 问题反馈工具始终注册（免费、不占配额、无授权要求——分发失联时唯一问题回流通道，
+  // 见 tools/report-issue.mjs 设计决策；任何门控都会把反馈掐死在起点）
+  await registerReportIssue(ctx, config)
+  registered.push(REPORT_ISSUE_TOOL_NAME)
 
   // L1 始终注册（工具恒存在）；调用时按许可证门控——
   // 无码/过期/无效 → 返回 LICENSE_REQUIRED 引导，L0 不受影响（落实引流触点 2）
