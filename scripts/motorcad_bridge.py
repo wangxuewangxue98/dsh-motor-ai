@@ -66,6 +66,19 @@ EMAG_RESULT_VARS = [
     "ElectromagneticPower",
 ]
 
+# 关键损耗字段（rc.15 sanity 门用）：一台通电且旋转的电机，这四项不可能同时为 0。
+# 刻意**不**纳入 Loss_[Rotor_Copper]（PMSM 转子铜耗本就≈0）、Loss_[Magnet]、
+# Loss_[Windage]/Loss_[Friction_*]（低速点可极小）、Loss_[Stray_Load]（可不计），
+# 否则"全 0"判据会被合法工况误触发。
+CORE_LOSS_VARS = [
+    "Loss_[Total]",
+    "Loss_[Stator_Copper]",
+    "Loss_[Stator_Back_Iron]",
+    "Loss_[Stator_Tooth]",
+]
+# 浮点零判定容差（W）：低于此值视为读出 0，避免 1e-12 级残值绕过判据
+LOSS_ZERO_EPS = 1e-9
+
 
 class BridgeError(Exception):
     def __init__(self, reason, message):
@@ -337,7 +350,11 @@ def _sanity_gate(emag, rated_w):
     仍 return=0，但读回 InputPower=24.9MW / 效率 0.51% 的垃圾值——
     **return=0 ≠ 结果可信**。本门在读回功率后与额定功率比对：
       1. 计算效率 < 10%  → 判定数值不可信；
-      2. InputPower > 额定×10 → 判定电流路径未同步。
+      2. InputPower > 额定×10 → 判定电流路径未同步；
+      3. 关键损耗字段全为 0（rc.15）→ 判定 EMag 未真正求解。
+        注：判据 1/2 在"求解空转"场景下可能双双不触发——0 损耗时
+        功率可能同样为 0（0/0 算不出效率、InputPower 也不超额定×10），
+        垃圾值因此被静默采信。故补损耗维度作为独立防线。
     异常时写 result_warning + result_trusted=False，上层不得静默采信。
     """
     warnings = []
@@ -359,6 +376,24 @@ def _sanity_gate(emag, rated_w):
         warnings.append(
             f"InputPower {inp:.4g}W 超过额定 {rated_w:.4g}W 的 10 倍："
             f"电流路径可能未同步，本次数值不可信"
+        )
+
+    # 3) 关键损耗字段全 0（rc.15）：DoMagneticCalculation 空转/求解未真正执行时
+    #    GetVariable 仍成功返回 0。一台通电旋转的电机定子铜耗与铁耗不可能同时为 0，
+    #    故"读回的关键损耗全 0"= 求解未产出，损耗/效率数值不可信。
+    #    仅在**至少读回一个**关键字段时判定：一个都没读回是另一类失败（下面单独告警），
+    #    不并入"全 0"语义，避免与 GetVariable 失败场景混淆。
+    read_back = [k for k in CORE_LOSS_VARS
+                 if isinstance(emag.get(k), (int, float))]
+    if not read_back:
+        warnings.append(
+            f"未回读任何关键损耗字段（{'/'.join(CORE_LOSS_VARS)}）："
+            f"EMag 结果可能未产出，本次数值不可信"
+        )
+    elif all(abs(emag[k]) < LOSS_ZERO_EPS for k in read_back):
+        warnings.append(
+            f"关键损耗字段全 0（{'/'.join(read_back)} = 0）：EMag 可能未真正求解"
+            f"（Loss 读出 0 ≠ 可信），本次损耗/效率数值不可信"
         )
     return warnings
 

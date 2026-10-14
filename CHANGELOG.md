@@ -1,3 +1,37 @@
+## [1.0.0-rc.15] - 2026-10-15
+
+### Fixed
+- **P0（L2）sanity 门补「关键损耗字段全 0」判定**：`scripts/motorcad_bridge.py` 的
+  `_sanity_gate` 原先只有两条判据（计算效率 < 10% / InputPower > 额定×10）。EMag
+  **求解空转**时功率同样读回 0 ⇒ `OutputPower/InputPower = 0/0` 算不出效率、`InputPower`
+  也不超阈 ⇒ **两条判据双双失效，垃圾损耗/效率被静默采信**（`return=0 ≠ 结果可信` 的
+  历史 v3 事故同类形态）。
+  新增判据 3：关键损耗字段（`Loss_[Total]` / `Loss_[Stator_Copper]` /
+  `Loss_[Stator_Back_Iron]` / `Loss_[Stator_Tooth]`，常量 `CORE_LOSS_VARS`，
+  零容差 `LOSS_ZERO_EPS=1e-9`）**读回后全部为 0** ⇒ 判定 EMag 未真正求解，
+  写 `result_warning` + `result_trusted=False`。
+  刻意**不**纳入 `Loss_[Rotor_Copper]`（PMSM 本就≈0）、`Loss_[Magnet]`、
+  `Loss_[Windage]`/`Loss_[Friction_*]`（低速可极小）、`Loss_[Stray_Load]`（可不计），
+  否则合法工况会被误杀。另：一个关键字段都没读回时走「未回读任何关键损耗字段」告警，
+  不与"全 0"混为一谈。
+
+### Gates & Tests
+- 新增 `scripts/sanity_gate_probe_rc15.py`（随包发布）：12 项行为断言，直连 import
+  `_sanity_gate`，覆盖 正常不告警 / **全 0 触发** / 部分为 0 不误杀 / **PMSM 转子铜耗为 0
+  不误杀** / 零读回走缺失分支 / 非 dict 静默 / 1e-12 残值仍判 0 / 字符串 '0' 不算读回 /
+  与既有判据叠加共存。用例 2b 坐实：全 0 场景下既有两条判据**均不触发**。
+- `scripts/verify.mjs` 门禁 6h：新增 `CORE_LOSS_VARS` / 「关键损耗字段全 0」/
+  `LOSS_ZERO_EPS` 静态断言 + **误纳黑名单**（四个可为 0 的分量）+ **运行时强断言**
+  （门内 spawn 跑 Python 探针，要求输出 `SANITY_GATE_PROBE_RC15_ALL_OK`，
+  可用 `DSH_PYTHON` 指定解释器，无 python 时降级提示）。
+- `tests/motorcad-p0-bundles.test.mjs` 第 8 项同步补 7 条断言（45 passed / 0 failed）。
+- **两轮反向验证**：① 保留文案但把判据改成 `elif False:` ⇒ 静态断言仍绿、
+  **运行时探针抓到 4 项失败 ⇒ 门禁红**（证明静态字符串断言不足以防回退）；
+  ② 把 `Loss_[Rotor_Copper]` 加入 `CORE_LOSS_VARS` ⇒ 误纳断言双路变红。
+- 坑（第 4 次同类）：`CORE_LOSS_VARS` 提取正则若写成非贪婪 `\[[\s\S]*?\]`，会被字段名
+  自带的 `]`（`Loss_[Total]`）提前截断 ⇒ 误纳检查**恒真 = 假绿灯**；已改为锚定
+  "行首的 `]`"，并加一条"块必须含总损耗/定子铜耗"的自检。
+
 ## [1.0.0-rc.14] - 2026-10-15
 
 ### Fixed

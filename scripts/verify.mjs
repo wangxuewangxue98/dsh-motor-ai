@@ -733,6 +733,38 @@ try {
       if (!pysrc.includes('def _sanity_gate')) hBad.push('bridge 缺 _sanity_gate（return=0≠可信防线）')
       if (!pysrc.includes('result_warning') || !pysrc.includes('result_trusted')) hBad.push('bridge sanity 门未写 result_warning/result_trusted')
       if (!pysrc.includes('rated_power_w')) hBad.push('bridge 未消费 rated_power_w')
+      // rc.15：损耗维度防线。求解空转时功率同样为 0 ⇒ 判据 1/2 双双失效，
+      // 必须靠"关键损耗字段全 0"拦住，否则垃圾值被静默采信（不可回退）。
+      if (!pysrc.includes('CORE_LOSS_VARS')) hBad.push('bridge 缺 CORE_LOSS_VARS（sanity 门损耗判据字段集）')
+      if (!pysrc.includes('关键损耗字段全 0')) hBad.push('bridge sanity 门缺「关键损耗字段全 0」判定')
+      if (!pysrc.includes('LOSS_ZERO_EPS')) hBad.push('bridge 缺 LOSS_ZERO_EPS（损耗零容差）')
+      if (!/read_back\s*=\s*\[k for k in CORE_LOSS_VARS/.test(pysrc)) hBad.push('sanity 门损耗判据未按 CORE_LOSS_VARS 读回集判定')
+      // 误杀防线：CORE_LOSS_VARS 不得纳入本就可能为 0 的分量（PMSM 转子铜耗/磁钢/风摩/杂散）
+      for (const banned of ['Loss_[Rotor_Copper]', 'Loss_[Magnet]', 'Loss_[Windage]', 'Loss_[Stray_Load]']) {
+        // 注意：字段名自带 "]"（Loss_[Total]），非贪婪到第一个 ] 会被提前截断；
+        // 必须锚定"行首的 ]"（列表结束符），否则误纳检查恒真 = 假绿灯。
+        const coreBlock = (pysrc.match(/CORE_LOSS_VARS = \[[\s\S]*?\n\]/) || [''])[0]
+        if (!/Loss_\[Total\]/.test(coreBlock) || !/Loss_\[Stator_Copper\]/.test(coreBlock)) {
+          hBad.push('CORE_LOSS_VARS 块解析失败或未含总损耗/定子铜耗（正则被字段名自带 ] 截断？）')
+        }
+        if (coreBlock.includes(banned)) hBad.push(`CORE_LOSS_VARS 误纳入 ${banned}（合法工况可为 0，会误杀）`)
+      }
+      if (!existsSync(join(ROOT, 'scripts', 'sanity_gate_probe_rc15.py'))) hBad.push('缺 sanity_gate_probe_rc15.py（损耗判据行为探针）')
+      // 运行时强断言：静态字符串查不出"判据被改写但文案还在"的回退，
+      // 必须真跑一遍探针（损耗全 0 触发 / 合法 PMSM 零铜耗不误杀）。
+      {
+        const probe = join(ROOT, 'scripts', 'sanity_gate_probe_rc15.py')
+        if (existsSync(probe)) {
+          const py = process.env.DSH_PYTHON || 'python'
+          const r = spawnSync(py, [probe], { encoding: 'utf8', timeout: 60_000 })
+          if (r.error || r.status === null) {
+            // 无 python 环境时降级为提示（可用 DSH_PYTHON 指定解释器以启用该强断言）
+            console.log(`  · 跳过 sanity 门运行时探针：python(${py}) 不可用（${r.error?.message || 'timeout'}）；可用 DSH_PYTHON 指定解释器`)
+          } else if (!String(r.stdout || '').includes('SANITY_GATE_PROBE_RC15_ALL_OK')) {
+            hBad.push(`sanity 门运行时探针未全绿（exit=${r.status}）：${String(r.stdout || r.stderr || '').split('\n').filter(Boolean).slice(-3).join(' | ')}`)
+          }
+        }
+      }
       const risrc = readFileSync(join(ROOT, 'tools', 'report-issue.mjs'), 'utf8')
       if (!risrc.includes("REPORT_ISSUE_TOOL_NAME = 'motor_report_issue'")) hBad.push('report-issue 工具名不是 motor_report_issue')
       const idxSrc3 = readFileSync(join(ROOT, 'index.mjs'), 'utf8')

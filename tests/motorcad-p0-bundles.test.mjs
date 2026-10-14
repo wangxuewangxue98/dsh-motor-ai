@@ -87,6 +87,19 @@ ok(pysrc.includes('result["result_trusted"] = False') && pysrc.includes('result[
 ok(pysrc.includes('req.get("rated_power_w")'), 'bridge 消费 rated_power_w')
 ok(pysrc.includes('eff < 10.0'), '效率阈值 10% 落码')
 ok(pysrc.includes('inp > rated_w * 10'), 'InputPower 超额定 10 倍判定落码')
+// rc.15：损耗维度防线（求解空转时功率同为 0 ⇒ 判据 1/2 双双失效，靠此拦住）
+ok(pysrc.includes('CORE_LOSS_VARS'), 'bridge 定义 CORE_LOSS_VARS（关键损耗字段集）')
+ok(pysrc.includes('关键损耗字段全 0'), '「关键损耗字段全 0」判定落码')
+ok(pysrc.includes('LOSS_ZERO_EPS'), '损耗零容差 LOSS_ZERO_EPS 落码')
+{
+  // 字段名自带 "]"（Loss_[Total]），必须锚定行首的 ] 作为列表结束符
+  const coreBlock = (pysrc.match(/CORE_LOSS_VARS = \[[\s\S]*?\n\]/) || [''])[0]
+  ok(coreBlock.includes('Loss_[Stator_Copper]') && coreBlock.includes('Loss_[Total]'),
+    'CORE_LOSS_VARS 含定子铜耗与总损耗')
+  for (const banned of ['Loss_[Rotor_Copper]', 'Loss_[Magnet]', 'Loss_[Windage]', 'Loss_[Stray_Load]']) {
+    ok(!coreBlock.includes(banned), `CORE_LOSS_VARS 未误纳 ${banned}（合法工况可为 0）`)
+  }
+}
 
 // ---------- 9) JS 侧承载 sanity 结果 ----------
 const verifySrc = readFileSync(join(here, 'tools', 'l2', 'motorcad-verify.mjs'), 'utf8')
