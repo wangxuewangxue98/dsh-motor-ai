@@ -1,3 +1,39 @@
+## [1.0.0-rc.16] - 2026-10-15
+
+### Fixed
+- **P0-2 `maxMatrixSize` 静默截断**（跨 rc.9~rc.15 未修）：`buildParamMatrix` 原先
+  `count = Math.min(maxMatrixSize, ...)` 截断后仅置 `truncated=true` 布尔位，
+  无告警、无报错 ⇒ 调用方无从得知采样密度被改变，Top1 效率与「达标」判定随 `count`
+  漂移（实测 20→91.56 / 2000→92.06 / 10000→92.09）。现在：
+  ① 新增 `MATRIX_TRUNCATED` 结构化告警（`requested_count` / `max_matrix_size` /
+     `returned` / `suggested_max_matrix_size` / `hard_cap`）；
+  ② 新增 `config.strictMaxMatrixSize`（默认 false，行为不变）——为 true 时
+     `count > maxMatrixSize` 直接抛错而非静默截断；
+  ③ 新增矩阵硬上限 `MATRIX_HARD_CAP=50000`，即使 `maxMatrixSize` 传再大也钳制
+     （对齐 l0 v0.4.0 既有保护，full 此前反而落后）。
+- **P1-1 冷却 `water` 静默回退 `forced_air`**：`cooling` 不在合法值内时不再静默回退，
+  写 `COOLING_FALLBACK` 告警（含合法值列表）。回退行为不变、可见性补齐。
+- **P0-1 verdict 密度敏感（缓解，非根治）**：新增 `density_check`（args 传
+  `density_check=true` 或 env `L0_DENSITY_CHECK=1`，默认 OFF 零回归），
+  以 20 与当前 count 双密度跑 pipeline 比对 Top1 效率，`|Δ| < 0.1pp` 判已收敛，
+  handoff 落 `density_check` 块（含 `converged` / `delta_pp` / 提示文案）。
+- **P0-4 默认 8 极静默假达标（用户建议：不改默认逻辑，改输出侧提示）**：
+  未显式传 `poles` 且默认极数下可行组为 0 时，`runL0Pipeline` 输出
+  `pole_suggestion`（默认极数 / 建议补算极数 / 理由），引导用户「可尝试更多极数」；
+  默认行为不变。
+
+### Added
+- `scripts/l0_fixes_probe_rc16.mjs`（新，随包）：20 断言行为探针，含
+  默认 OFF 零回归对照、密度收敛趋势实证（delta_pp≈0.06，与用户报告吻合）。
+- `scripts/verify.mjs` 门禁：静态断言（告警码/合法值/strict/硬上限/令牌透传）
+  + 运行时强断言（门内 spawn L0 探针）。
+
+### Notes
+- 两轮反向验证：破坏冷却判据（`if (false)`）后静态断言仍绿、运行时探针抓 2 项
+  失败 ⇒ 门禁红；均已还原复跑全绿。
+- l0 同款修复随 **dsh-motor-ai-l0 0.5.3** 发布（l0 侧 P0-2 此前已有 v0.4.0 部分修复，
+  本轮补齐其余三项并统一告警字段）。
+
 ## [1.0.0-rc.15] - 2026-10-15
 
 ### Fixed

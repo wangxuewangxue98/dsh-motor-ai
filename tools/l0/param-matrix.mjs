@@ -130,6 +130,9 @@ function linspace(lo, hi, n) {
  * @param {(pole:number)=>number} ratioOf 内外径比函数
  * @returns {number} 建议外径上限 (mm)
  */
+/** 矩阵规模硬上限（rc.16 P0-2，对齐 l0 v0.4.0 P0-4）：防止 maxMatrixSize 被传极大值导致网格爆炸 */
+export const MATRIX_HARD_CAP = 50000
+
 export function defaultOdLimit(baseD, scanRange, poleList, ratioOf) {
   let need = 0
   for (const pole of poleList) {
@@ -157,7 +160,12 @@ export function buildParamMatrix(rawSpec, config = {}) {
   // 同一调用链（同一 config 引用）只扣 1 次，pipeline 连调不重复扣。
   assertFreeQuota('motor_param_matrix', config)
   const { spec, applied } = normalizeSpec(rawSpec)
-  const maxMatrixSize = config.maxMatrixSize ?? 2000
+  // rc.16 P0-2（对齐 l0 v0.4.0 P0-4）：maxMatrixSize 需有限正值校验 + 硬上限钳制，
+  // 否则传极大值会让网格爆炸（内存/耗时失控）。越界时记 capWarning 并显式告警。
+  let maxMatrixSize = Number.isFinite(Number(config.maxMatrixSize)) && Number(config.maxMatrixSize) > 0
+    ? Number(config.maxMatrixSize) : 2000
+  const capWarning = maxMatrixSize > MATRIX_HARD_CAP ? maxMatrixSize : null
+  if (capWarning) maxMatrixSize = MATRIX_HARD_CAP
 
   const powerKw = Number(spec.power_kw)
   const speedRpm = Number(spec.speed_rpm)
@@ -174,11 +182,24 @@ export function buildParamMatrix(rawSpec, config = {}) {
     ? Number(spec.line_freq_hz) : (config.line_freq_hz ?? DEFAULT_LINE_FREQ_HZ)
   // v0.2.5：绝缘等级必须逐行透传，否则下游按 F 级 105K 判，B 级(80K)用户拿到不合规方案
   const insulationClass = String(spec.insulation_class ?? config.insulationClass ?? DEFAULT_INSULATION_CLASS).toUpperCase()
+  const polesExplicit = spec.poles != null && spec.poles !== ''
   const poles = spec.poles ?? recommendPoles(speedRpm, lineFreqHz)
   const torqueNm = spec.torque_nm ?? computeTorque(powerKw, speedRpm)
+  // rc.16 P1-1：冷却方式不再静默回退 —— 原值保留用于告警（water 等别名不在白名单，
+  // 旧版直接换成 forced_air 且不告知 ⇒ 水冷用户拿到风冷温升却无从察觉）。
+  const coolingInput = spec.cooling
   const cooling = COOLING_ALLOWED.includes(spec.cooling) ? spec.cooling : 'forced_air'
   // 外径上限见下方 dSteps/lSteps 之后 —— 默认值需依赖基准尺寸与极数表，无法在此定出
-  const count = Math.min(maxMatrixSize, Math.max(1, Math.floor(spec.count ?? 20)))
+  const requestedCount = Math.max(1, Math.floor(spec.count ?? 20))
+  // rc.16 P0-2 严格模式（默认关）：要求"绝不截断"的调用方可以 fail-fast，
+  // 而不是拿到被静默夹断的矩阵还以为跑满了。默认仍走告警，避免打断既有脚本。
+  if (config.strictMaxMatrixSize === true && requestedCount > maxMatrixSize) {
+    throw new Error(
+      `[motor_param_matrix] strictMaxMatrixSize=true 且请求 count=${requestedCount} > maxMatrixSize=${maxMatrixSize}：` +
+      `继续跑只会静默截断、使结论随采样密度漂移。请提高 config.maxMatrixSize 至 ${requestedCount} 或降低 count。`
+    )
+  }
+  const count = Math.min(maxMatrixSize, requestedCount)
 
   // ---- PMSM 口径开关（P0，0.1.4）----
   // 缺省 → legacy 口径 idRatio(pole)=0.55+0.03(p−2)，与 0.1.3 / 程序 focused_scan 逐字节一致（零回归）；
@@ -395,7 +416,7 @@ export function buildParamMatrix(rawSpec, config = {}) {
   // truncated 必须拿「原始请求量」比，不能拿被 maxMatrixSize 夹断后的 count 比 ——
   // 后者恒为 false，会掩盖真实截断。
   const returned = matrix.slice(0, maxMatrixSize)
-  const truncated = Math.max(1, Math.floor(spec.count ?? 20)) > returned.length
+  const truncated = requestedCount > returned.length
 
   // ---- 形状自检：任何一行缺 L1 严格必填都视为内部错误 ----
   for (const row of returned) {
@@ -452,6 +473,71 @@ export function buildParamMatrix(rawSpec, config = {}) {
     })
   }
 
+  // ---- rc.16 P0-2：矩阵截断不再静默 ----
+  // 旧版只把 truncated 塞进 summary 且不进 warnings：请求 count=10000 时默认
+  // maxMatrixSize=2000 静默只生成 2000 行，"达标/不达标"因此被采样密度翻转
+  //（见 P0-1 密度敏感）而调用方完全无从察觉。
+  if (truncated || capWarning) {
+    warnings.push({
+      code: 'MATRIX_TRUNCATED',
+      level: 'warning',
+      requested: requestedCount,
+      requested_count: requestedCount, // 与 l0 字段名对齐，同时保留可读别名
+      returned: returned.length,
+      max_matrix_size: maxMatrixSize,
+      hard_cap: MATRIX_HARD_CAP,
+      suggested_max_matrix_size: requestedCount,
+      message: capWarning
+        ? `maxMatrixSize=${capWarning} 超过硬上限 ${MATRIX_HARD_CAP}，已钳至 ${maxMatrixSize}；`
+        + `若确实需要更大规模请分批调用。`
+        : `请求 ${requestedCount} 个方案，受 maxMatrixSize=${maxMatrixSize} 限制仅产出 ${returned.length} 个；`
+        + `采样密度被静默改变 ⇒ Top1 效率与「达标」判定会随 count 漂移，`
+        + `本次结论不可与不同 count 的结果直接比较。建议提高 config.maxMatrixSize 至 ${requestedCount}（上限 ${MATRIX_HARD_CAP}），`
+        + `并用密度收敛自检（args.density_check=true / env L0_DENSITY_CHECK=1）确认已收敛。`,
+    })
+  }
+
+  // ---- rc.16 P1-1：冷却方式回退不再静默 ----
+  // water 不在 COOLING_ALLOWED（natural/forced_air/liquid_jacket/oil_spray/oil_immersed）
+  // ⇒ 旧版静默换成 forced_air：水冷用户拿到风冷温升（h 差数倍）却无从察觉。
+  if (coolingInput != null && coolingInput !== cooling) {
+    warnings.push({
+      code: 'COOLING_FALLBACK',
+      level: 'warning',
+      input: coolingInput,
+      resolved_as: cooling,
+      allowed: COOLING_ALLOWED,
+      suggested: String(coolingInput).toLowerCase().includes('water') ? 'liquid_jacket' : null,
+      message:
+        `cooling='${coolingInput}' 不在合法集合 [${COOLING_ALLOWED.join(', ')}]，已按 ` +
+        `'${cooling}' 计算。冷却方式直接决定散热系数 h（水冷套远高于强制风冷），` +
+        `回退会让温升结论系统性偏保守/偏乐观而不可信。` +
+        (String(coolingInput).toLowerCase().includes('water')
+          ? `「water」的合法近义是 'liquid_jacket'（水冷套），请改传该值重算。`
+          : `请改传上述合法值之一重算。`),
+    })
+  }
+
+  // ---- rc.16 P0-4：默认极数给出"可尝试更多极数"的建议（不改默认，只给建议）----
+  // recommendPoles 的最高档就是 8 极；低速大转矩工况下 >8 极往往更优，
+  // 但旧版对"极数是猜的"完全不提示 ⇒ 用户把默认 8 极的结果当成最优解。
+  if (!polesExplicit) {
+    const higherPoles = [poles + 2, poles + 4].filter((p) => p <= 16)
+    warnings.push({
+      code: 'POLES_DEFAULT_ASSUMED',
+      level: 'info',
+      poles,
+      higher_pole_candidates: higherPoles,
+      message:
+        `未指定 poles，按转速 ${speedRpm}rpm / ${lineFreqHz}Hz 推荐为 ${poles} 极。` +
+        `该推荐只保证「同步转速仍高于额定转速」这一条硬约束（V16），不是转矩密度最优解；` +
+        (higherPoles.length
+          ? `建议显式对比更多极数（${higherPoles.join(' / ')} 极）——低速大转矩工况下更高极数` +
+            `常能同时改善转矩密度与磁密裕度，避免"刚好达标"的假性结论。`
+          : `当前已是推荐上限档，如需更多极数请显式传 poles 并确认 V16 同步转速约束。`),
+    })
+  }
+
   return {
     warnings,
     od_limit: odLimitMeta,
@@ -464,6 +550,8 @@ export function buildParamMatrix(rawSpec, config = {}) {
       motor_type: motorResolved.type,
       motor_type_assumed: motorResolved.assumed,
       motor_type_input: motorType ?? undefined,
+      // rc.16 P0-4：极数是否为调用方显式给定（false ⇒ 走 recommendPoles 默认推荐）
+      poles_explicit: polesExplicit,
       torque_nm: torqueNm, cooling, count,
       line_freq_hz: lineFreqHz, insulation_class: insulationClass,
     },

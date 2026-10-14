@@ -212,7 +212,13 @@ const CONFIG_SCHEMA = {
     maxMatrixSize: {
       type: 'number',
       default: 2000,
-      description: '参数矩阵规模上限（超过拒绝，防组合爆炸）',
+      description: '参数矩阵规模上限（超过则截断并告警 MATRIX_TRUNCATED，防组合爆炸）',
+    },
+    // rc.16 P0-2：默认 false（截断只告警，兼容既有脚本）；true = 请求量超上限直接报错
+    strictMaxMatrixSize: {
+      type: 'boolean',
+      default: false,
+      description: '矩阵截断严格模式：请求 count 超过 maxMatrixSize 时直接报错而非静默截断',
     },
     defaultMotorType: {
       type: 'string',

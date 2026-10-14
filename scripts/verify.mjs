@@ -534,6 +534,44 @@ try {
       if (!/runL0Estimate\([\s\S]*?\},[\s\S]*?chainCfg\)/.test(pl)) hBad.push('pipeline.mjs 未把带令牌配置透传给 runL0Estimate')
     }
 
+    // 6a2) rc.16 L0 四项修复不可回退（静默失败防线）
+    //      P0-2 截断告警 + 硬上限 + 严格模式；P1-1 冷却回退告警；
+    //      P0-4 默认极数建议；P0-1 密度收敛自检（默认 OFF，须读 efficiency_raw）。
+    {
+      const pm = readFileSync(join(ROOT, 'tools', 'l0', 'param-matrix.mjs'), 'utf8')
+      const pl = readFileSync(join(ROOT, 'tools', 'l0', 'pipeline.mjs'), 'utf8')
+      for (const [src, label, need] of [
+        [pm, 'param-matrix.mjs', ['MATRIX_TRUNCATED', 'MATRIX_HARD_CAP', 'strictMaxMatrixSize',
+          'COOLING_FALLBACK', 'POLES_DEFAULT_ASSUMED', 'poles_explicit']],
+        [pl, 'pipeline.mjs', ['density_check', 'DENSITY_NOT_CONVERGED',
+          'export function topEfficiencyOf']],
+      ]) {
+        for (const token of need) {
+          if (!src.includes(token)) hBad.push(`${label} 缺 ${token}（rc.16 L0 修复被回退）`)
+        }
+      }
+      // 密度自检必须读真值：拿被钳的 efficiency 比对会在高效率段恒差 0 ⇒ 假绿
+      if (!/efficiency_raw\s*\?\?\s*row\.efficiency/.test(pl)) {
+        hBad.push('topEfficiencyOf 未优先读 efficiency_raw（密度自检会假绿）')
+      }
+      // 默认必须 OFF（零回归）：自检不得无条件执行
+      if (!/args\.density_check\s*===\s*true/.test(pl) || !/L0_DENSITY_CHECK/.test(pl)) {
+        hBad.push('密度自检未受 args.density_check / L0_DENSITY_CHECK 控制（默认 OFF 零回归被破坏）')
+      }
+      if (!existsSync(join(ROOT, 'scripts', 'l0_fixes_probe_rc16.mjs'))) {
+        hBad.push('缺 l0_fixes_probe_rc16.mjs（rc.16 L0 四项修复行为探针）')
+      } else {
+        // 运行时强断言：静态字符串查不出「判据被改坏但文案还在」的回退
+        const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'l0_fixes_probe_rc16.mjs')],
+          { encoding: 'utf8', timeout: 180_000 })
+        const out = String(r.stdout || '')
+        if (!out.includes('L0_FIXES_PROBE_RC16_ALL_OK')) {
+          hBad.push(`L0 四项修复运行时探针未全绿（exit=${r.status}）：` +
+            out.split('\n').filter((l) => l.startsWith('[FAIL]')).join(' | ').slice(0, 300))
+        }
+      }
+    }
+
     // 6b) L1/L2 付费档主力路径同样必须接入闸门（付费档 9999/天 宽松硬顶，防脚本批量刷用）；
     //     只给 L0 计数等于漏掉付费用户的真实消耗路径。
     for (const f of ['tools/l1/rmxprt-solve.mjs', 'tools/l2/motorcad-verify.mjs']) {
