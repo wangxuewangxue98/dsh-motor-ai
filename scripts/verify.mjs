@@ -536,6 +536,51 @@ try {
       }
     }
 
+    // 6f) rc.11：config 键覆盖门禁（P0-②，防"改配置不生效"复发）
+    //     规则：本仓代码实际读取的 config 键 ⊆ CONFIG_SCHEMA 声明键。
+    //     背景：backendUrl/commerceBackendUrl 等键被代码读取但未声明 → DSH 裁成
+    //     undefined → 后端通道/遥测端点/L2 调参全部静默失效（该类问题第二次复发）。
+    //     另：L1 worker 必须随包分发（rc.11 前只在外仓，分发版 L1 恒不可用）。
+    {
+      const idxSrc = readFileSync(join(ROOT, 'index.mjs'), 'utf8')
+      const schemaBlock = idxSrc.match(/const CONFIG_SCHEMA = \{[\s\S]*?\n\}/)
+      if (!schemaBlock) {
+        hBad.push('index.mjs 找不到 CONFIG_SCHEMA')
+      } else {
+        const declared = new Set(
+          [...schemaBlock[0].matchAll(/^    ([a-zA-Z_][a-zA-Z0-9_]*): \{$/gm)].map((x) => x[1])
+        )
+        // 运行时由插件自身注入、非 DSH 用户配置的键（DSH 不过 schema）
+        const RUNTIME_KEYS = new Set(['pluginVersion'])
+        const scanFiles = [
+          'index.mjs',
+          'lib/quota.mjs', 'lib/license.mjs', 'lib/telemetry.mjs',
+          'lib/usage-log.mjs', 'lib/experience-upload.mjs', 'lib/regression-gate.mjs',
+          'lib/surrogate-engine.mjs', 'lib/formula-engine.mjs',
+          'tools/l0/param-matrix.mjs', 'tools/l0/l0-estimate.mjs',
+          'tools/l0/pipeline.mjs', 'tools/l0/design-validate.mjs',
+          'tools/l1/rmxprt-solve.mjs', 'tools/l2/motorcad-verify.mjs',
+        ]
+        const read = new Set()
+        for (const f of scanFiles) {
+          const p = join(ROOT, f)
+          if (!existsSync(p)) continue
+          const src = readFileSync(p, 'utf8')
+          for (const m of src.matchAll(/\bconfig\??\.([a-zA-Z_][a-zA-Z0-9_]*)/g)) read.add(m[1])
+        }
+        const missing = [...read].filter((k) => !declared.has(k) && !RUNTIME_KEYS.has(k)).sort()
+        if (missing.length) {
+          hBad.push(`代码读取但 CONFIG_SCHEMA 未声明（DSH 会裁键 → 恒 undefined）：${missing.join(', ')}`)
+        }
+        // L1 worker 随包分发（rc.11）
+        if (!existsSync(join(ROOT, 'scripts', '_rmxprt_venv_worker.py'))) {
+          hBad.push('scripts/_rmxprt_venv_worker.py 缺失 → 分发版 L1 恒不可用（README ⏳ 真相）')
+        }
+        const l1 = readFileSync(join(ROOT, 'tools', 'l1', 'rmxprt-solve.mjs'), 'utf8')
+        if (!/bundledWorkerPath/.test(l1)) hBad.push('L1 缺包内 worker 解析（bundledWorkerPath），分发版只能靠外部路径')
+      }
+    }
+
     // 6c) 付费档必须存在宽松硬顶（否则单账号可无限脚本化调用）
     if (typeof quota.getPaidDailyLimit !== 'function') {
       hBad.push('quota.mjs 缺导出 getPaidDailyLimit（付费档硬顶）')

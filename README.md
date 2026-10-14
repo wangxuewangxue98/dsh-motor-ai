@@ -60,11 +60,16 @@ npm install dsh-motor-ai@next
 | L0 | motor_l0_estimate | 公式效率估算 | ✅ |
 | L0 | motor_design_validate | 设计校验 | ✅ |
 | L0 | motor_l0_pipeline | L0 全流程 | ✅ |
-| L1 | motor_l1_estimate | RMxprt 估算 | ⏳ |
-| L1 | motor_l1_pipeline | RMxprt 批处理 | ⏳ |
-| L1 | motor_rmxprt_solve | RMxprt 单解 | ⏳ |
-| L2 | motor_l2_validate | 几何校验 | ⏳ |
-| L2 | motor_motorcad_verify | COM 验证 | ⏳ |
+| L1 | motor_l1_estimate | RMxprt 估算 | ⚙️ 随包分发，需本机 AEDT |
+| L1 | motor_l1_pipeline | RMxprt 批处理 | ⚙️ 随包分发，需本机 AEDT |
+| L1 | motor_rmxprt_solve | RMxprt 单解 | ⚙️ 随包分发，需本机 AEDT |
+| L2 | motor_l2_validate | 几何校验 | ⚙️ 随包分发，需本机 Motor-CAD |
+| L2 | motor_motorcad_verify | COM 验证 | ⚙️ 随包分发，需本机 Motor-CAD |
+
+> **求解器依赖说明（rc.11 起）**：L1/L2 的求解器脚本已随包分发（`scripts/_rmxprt_venv_worker.py` / `scripts/motorcad_bridge.py`），装完即可用；但**本机仍需安装对应商业求解器**：
+> - **L1**：Ansys AEDT 2020.x（RMxprt）+ Python 3.10 环境装有 `pyaedt 0.6.x` 或 `pywin32`；解释器路径用 `PYTHON_BIN` 指定，worker 可用 `RMXPRT_WORKER_PATH` 覆盖（默认用包内副本）
+> - **L2**：Motor-CAD v11.1.5（`MotorCAD.AppAutomation`）+ Python 3.10 环境装有 `pywin32`；路径用 `MOTORCAD_PATH` / `MOTORCAD_INSTALL_DIR` 指定
+> 未装求解器时调用返回结构化错误引导，不影响 L0。
 
 ## 互斥规则
 

@@ -1,3 +1,31 @@
+## [1.0.0-rc.11] - 2026-10-14
+
+### Added
+- **L1 RMxprt 求解器随包分发（README ⏳ 真相修复）**：`scripts/_rmxprt_venv_worker.py`
+  （3674 行，源自 `MotorDesign/Scripts`，v3 防弹版 + P0-2 绕组接法注入）正式入库并随包
+  分发；`tools/l1/rmxprt-solve.mjs` 路径解析改为**包内副本优先**（`bundledWorkerPath`），
+  `RMXPRT_WORKER_PATH` 环境变量仍可覆盖、`MOTORDESIGN_ROOT` 次选。此前 worker 只存在于
+  后端仓，分发版完整版 L1 恒报「未配置 RMXPRT_WORKER_PATH」——README 的 ⏳ 不是没写代码，
+  是求解器资产未随包。注意：仍需本机装有 Ansys AEDT 2020.x（RMxprt）+ Python 3.10
+  （pyaedt 0.6.x / pywin32），解释器用 `PYTHON_BIN` 指定；未装时返回结构化错误引导，
+  不影响 L0。
+- **CONFIG_SCHEMA 补声明 32 键（P0-②，治「改配置不生效」）**：`backendUrl` /
+  `commerceBackendUrl` / `telemetryIntervalSec` / L0 运行 6 键（l0Mode、surrogatePath、
+  surrogateConfidenceThreshold、maxMatrixSize、defaultMotorType、line_freq_hz）/ 物理口径
+  5 键（efficiencyCap、tempRiseRange、airGapFluxT、insulationClass、bgCaliber）/ L2 8 键
+  （motorcadMode、motorcadProgid、motorcadPython、motorcadTimeoutMs、motFile、runEmag、
+  runThermal、fallbackToEquivalent）/ 配额经验 6 键 / 工程回归 4 键。schema 8 → **40 键**，
+  所有 default 与代码内默认逐键对齐（防声明后行为漂移）。背景：DSH 会裁掉 schema 未声明键
+  → cordis.patch.yml 里写的 30+ 项配置此前**只有 8 项真正生效**，后端通道被裁直接卡死
+  遥测端点与公网后端方案（该类问题第二次复发）。
+- 测试 `tests/config-schema-coverage.test.mjs`（21 用例）+ `scripts/verify.mjs` 门禁 **6f**：
+  静态比对「代码读取的 config 键 ⊆ schema 声明键」（漏一个即 fail）+ worker 在包断言 +
+  L1 包内解析断言。门禁首跑即抓到漏网键 `bgCaliber`，已补声明。
+
+### Fixed
+- `line_freq_hz` 为 0 时被 `Number.isFinite` 误判为有效值注入 `lineFreqHz: 0`（工频不可能
+  ≤0）→ 两处判断改为 `> 0` 防护（`tools/l0/l0-estimate.mjs` / `tools/l0/design-validate.mjs`）。
+
 ## [1.0.0-rc.10] - 2026-10-14
 
 ### Added

@@ -22,7 +22,7 @@ whenToUse: >
 user-invocable: true
 metadata:
   author: Motor-AI
-  version: 1.0.0-rc.10
+  version: 1.0.0-rc.11
   level: l0
   tier: free
 ---

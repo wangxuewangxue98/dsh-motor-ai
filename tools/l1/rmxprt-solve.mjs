@@ -16,9 +16,11 @@
 import { resolveMotorType, isLevelEnabled } from '@wangxue98/dsh-motor-ai-core'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile, unlink } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { getL1L2License, buildActivationGuide } from '../../lib/license.mjs'
 import { enforceQuota } from '../../lib/quota.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
@@ -51,20 +53,35 @@ async function checkL1License(meta = {}) {
 /**
  * RMxprt 求解器与 Python 解释器路径解析。
  *
- * 优先使用环境变量；若未配置，则尝试从 PATH 里的 `python` 兜底。
- * **不内置任何本机绝对路径** —— 求解器路径属于部署环境配置，
- * 由使用者通过环境变量或 PATH 提供。
+ * 优先级（rc.11 起随包分发 worker）：
+ *   1. 环境变量 RMXPRT_WORKER_PATH（使用者显式覆盖，最高优先级）
+ *   2. **包内副本** `scripts/_rmxprt_venv_worker.py`（rc.11 新增，安装即可用）
+ *   3. MOTORDESIGN_ROOT 拼接（开发者本机指向 MotorDesign 仓库）
+ *   4. 都拿不到 → 抛错引导
+ * 不内置任何本机绝对路径；Python 解释器仍由使用者提供（见 resolvePythonBin）。
  *
  * 环境变量:
  *   - RMXPRT_WORKER_PATH: `_rmxprt_venv_worker.py` 的完整路径（最高优先级）
  *   - PYTHON_BIN:         驱动求解器的 Python 解释器完整路径
- *   - MOTORDESIGN_ROOT:   MotorDesign 仓库根目录（用于拼接上面两项，仅当单独
- *                        设置 RMXPRT_WORKER_PATH/PYTHON_BIN 时作为次选拼接源）
+ *   - MOTORDESIGN_ROOT:   MotorDesign 仓库根目录（次选拼接源）
  */
 const MOTORDESIGN_ROOT = process.env.MOTORDESIGN_ROOT || ''
 
+/** 包内 worker 副本（与 tools/l1/rmxprt-solve.mjs 同在发布包内：scripts/） */
+function bundledWorkerPath() {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url))
+    const candidate = join(here, '..', '..', 'scripts', '_rmxprt_venv_worker.py')
+    return existsSync(candidate) ? candidate : null
+  } catch {
+    return null
+  }
+}
+
 function resolveWorkerPath() {
   if (process.env.RMXPRT_WORKER_PATH) return process.env.RMXPRT_WORKER_PATH
+  const bundled = bundledWorkerPath()
+  if (bundled) return bundled
   if (MOTORDESIGN_ROOT) {
     return join(MOTORDESIGN_ROOT, 'Scripts', '_rmxprt_venv_worker.py')
   }

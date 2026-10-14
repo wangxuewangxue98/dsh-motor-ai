@@ -66,7 +66,7 @@ export function runDesignValidate(rawArgs, config = {}) {
     insulationClass: args.insulation_class ?? args.insulationClass ?? config.insulationClass,
     // v0.2.5：电源频率入参透传（V16/V18 判据的自变量）
     lineFreqHz: typeof args.line_freq_hz === 'number' ? args.line_freq_hz
-      : (typeof config.line_freq_hz === 'number' ? config.line_freq_hz : undefined),
+      : (typeof config.line_freq_hz === 'number' && config.line_freq_hz > 0 ? config.line_freq_hz : undefined),
     airGapFlux: typeof args.air_gap_flux === 'number'
       ? args.air_gap_flux
       : (typeof config.airGapFluxT === 'number' ? config.airGapFluxT : undefined),

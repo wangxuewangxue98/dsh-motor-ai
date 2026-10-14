@@ -95,7 +95,7 @@ export function runL0Estimate(rawArgs, config = {}) {
     ...(Number.isFinite(Number(row?.line_freq_hz)) ? { lineFreqHz: Number(row.line_freq_hz) } : {}),
     ...(!row?.insulation_class && config.insulationClass
       ? { insulationClass: String(config.insulationClass).toUpperCase() } : {}),
-    ...(!Number.isFinite(Number(row?.line_freq_hz)) && Number.isFinite(Number(config.line_freq_hz))
+    ...(!Number.isFinite(Number(row?.line_freq_hz)) && Number(config.line_freq_hz) > 0
       ? { lineFreqHz: Number(config.line_freq_hz) } : {}),
   })
   

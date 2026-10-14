@@ -162,6 +162,176 @@ const CONFIG_SCHEMA = {
       default: 60000,
       description: '两次上报尝试之间的最小间隔毫秒（0 = 不节流；兼容旧键 telemetryIntervalSec 秒语义）',
     },
+    telemetryIntervalSec: {
+      type: 'number',
+      default: 300,
+      description: '旧键（秒语义）：仅在未设置 telemetryMinIntervalMs 时生效',
+    },
+    // ---- 后端通道（rc.11 补声明：不声明会被 DSH 裁成 undefined）----
+    // 空 = 依次回退环境变量 DSH_BACKEND_URL → 本机 http://127.0.0.1:5000。
+    backendUrl: {
+      type: 'string',
+      default: '',
+      description: '后端基址（配额旁路遥测 / 聚合遥测 / 激活在线校验共用）；空 = 用 env DSH_BACKEND_URL 或本机 5000',
+    },
+    commerceBackendUrl: {
+      type: 'string',
+      default: '',
+      description: '商业化后端基址（优先于 backendUrl）；空 = 回退 backendUrl 逻辑',
+    },
+    // ---- L0 运行参数（默认值与代码内默认逐键对齐；cordis.patch.yml 的 bundle 值优先）----
+    l0Mode: {
+      type: 'string',
+      enum: ['formula', 'surrogate', 'auto'],
+      default: 'formula',
+      description: "L0 通道：formula=公式（默认）/ surrogate=代理 / auto=代理失败自动回退公式；注意 cordis.patch.yml 默认 'auto'",
+    },
+    surrogatePath: {
+      type: 'string',
+      default: 'models/l0_surrogate_family.json',
+      description: 'L0 代理模型文件（相对插件根）',
+    },
+    surrogateConfidenceThreshold: {
+      type: 'number',
+      default: 0.4,
+      description: '代理模型置信度阈值（低于则回退公式通道）',
+    },
+    maxMatrixSize: {
+      type: 'number',
+      default: 2000,
+      description: '参数矩阵规模上限（超过拒绝，防组合爆炸）',
+    },
+    defaultMotorType: {
+      type: 'string',
+      default: 'pmsm',
+      description: '默认电机类型（im/synm/pmsm 等，工具入参可覆盖）',
+    },
+    line_freq_hz: {
+      type: ['number', 'null'],
+      default: null,
+      description: '工频默认值（行入参缺省时兜底；null = 不注入）',
+    },
+    // ---- 物理校验口径（与 lib/regression-gate.mjs / tools/l0 内默认一致）----
+    efficiencyCap: {
+      type: 'number',
+      default: 96,
+      description: '效率上限校验值（%，对齐 motor_tools.py:752）',
+    },
+    tempRiseRange: {
+      type: 'array',
+      default: [45, 130],
+      description: '温升限值区间 [min, max]（K）',
+    },
+    airGapFluxT: {
+      type: 'number',
+      default: 0.8,
+      description: '气隙磁密基准（T）',
+    },
+    insulationClass: {
+      type: 'string',
+      default: 'F',
+      description: '绝缘等级（B=80K / F=105K / H=125K），行入参可覆盖',
+    },
+    bgCaliber: {
+      type: 'string',
+      enum: ['actual', 'intent'],
+      default: 'actual',
+      description: '气隙磁密口径：actual=实测几何 / intent=设计意图（工具入参 bg_caliber 可覆盖）',
+    },
+    // ---- L2 Motor-CAD（与 tools/l2/motorcad-verify.mjs 内默认一致）----
+    motorcadMode: {
+      type: 'string',
+      enum: ['com', 'backend', 'auto'],
+      default: 'com',
+      description: 'L2 通道：com=本机 COM 直驱（默认）/ backend=后端代理（预留未实现）/ auto',
+    },
+    motorcadProgid: {
+      type: 'string',
+      default: 'MotorCAD.AppAutomation',
+      description: 'Motor-CAD COM ProgID',
+    },
+    motorcadPython: {
+      type: 'string',
+      default: '',
+      description: '驱动 bridge 的 Python 解释器路径；空 = 依次探测 PATH/MotorDesign 内嵌',
+    },
+    motorcadTimeoutMs: {
+      type: 'number',
+      default: 600000,
+      description: 'Motor-CAD 求解超时（ms；电磁分析约 190-200s，默认留足余量）',
+    },
+    motFile: {
+      type: 'string',
+      default: '',
+      description: '默认 .mot 模板文件；空 = 不预载（也可用 env MOTORCAD_DEFAULT_MOT）',
+    },
+    runEmag: {
+      type: 'boolean',
+      default: true,
+      description: 'L2 verify 是否执行电磁分析',
+    },
+    runThermal: {
+      type: 'boolean',
+      default: true,
+      description: 'L2 verify 是否执行热分析',
+    },
+    fallbackToEquivalent: {
+      type: 'boolean',
+      default: true,
+      description: 'L2 COM 不可用时是否降级等效电路法（runL0Estimate）兜底',
+    },
+    // ---- 配额 / 经验回传 / usage 落盘（与 lib 内默认一致）----
+    quotaPluginId: {
+      type: 'string',
+      default: 'dsh-motor-ai-l0',
+      description: '后端额度账 plugin_id（历史约定：完整版与 l0 共用一本账）',
+    },
+    freeQuotaEnabled: {
+      type: 'boolean',
+      default: true,
+      description: '免费档每日硬配额开关；false = 关闭本地配额（不推荐）',
+    },
+    usageLog: {
+      type: 'boolean',
+      default: true,
+      description: '本地 usage.jsonl 落盘开关；false = 不落盘（遥测聚合也会无源）',
+    },
+    designExperienceUpload: {
+      type: 'boolean',
+      default: false,
+      description: '脱敏设计经验回传（design_exp 通道）；显式 true 才启用',
+    },
+    experienceEndpoint: {
+      type: 'string',
+      default: '',
+      description: 'design_exp 通道端点；空 = 回退 telemetryEndpoint',
+    },
+    experienceBatchSize: {
+      type: 'number',
+      default: 200,
+      description: 'design_exp 单批上限条数',
+    },
+    // ---- 工程 / 回归（与 lib/regression-gate.mjs、tools/l0/pipeline.mjs 内默认一致）----
+    motorDesignRoot: {
+      type: 'string',
+      default: '',
+      description: 'MotorDesign 仓库根（求解器路径拼接源）；空 = 用 env MOTORDESIGN_ROOT',
+    },
+    handoffDir: {
+      type: 'string',
+      default: '',
+      description: 'L0 pipeline 交接目录；空 = 进程 cwd 下 l0-handoff',
+    },
+    budget: {
+      type: 'object',
+      default: { efficiency_pt: 2, temp_k: 10 },
+      description: '回归门预算 { efficiency_pt, temp_k }',
+    },
+    sanityBlocking: {
+      type: 'boolean',
+      default: false,
+      description: '回归 sanity 检查是否阻断（true = fail-fast）',
+    },
     // ... 其他配置项可继承自 core
   },
 }
