@@ -1,3 +1,22 @@
+## [1.0.0-rc.13] - 2026-10-15
+
+### Fixed
+- **P0-门1（对齐 l0 v0.5.1）多重计数**：L0 四个纯函数（runL0Pipeline / buildParamMatrix /
+  runDesignValidate / runL0Estimate）入口过闸并传同一 config 引用 —— 修复
+  motor_l0_pipeline 一次调用扣 3 次（execute enforceQuota 1 次 + 纯函数无 config 各扣
+  1 次）的缺陷；execute 改为捕获 QuotaExceededError 回引导文案，不再 await enforceQuota
+  （await 边界会放跑一次性消费标记导致双重扣次）。
+- `assertFreeQuota` 尊重 `freeQuotaEnabled:false` 运维开关；experience-hub capture 与
+  case-feedback 聚合的离线批量调用显式 bypass，不再消耗用户每日免费额度。
+
+### Gates & Tests
+- `scripts/verify.mjs` 门禁 H 升级：静态断言新接线形态（assertFreeQuota/QuotaExceededError
+  import + 纯函数入口过闸 + execute 捕获 + 禁 `await enforceQuota(config)` 旧写法）+
+  运行时语义用例（同一调用链不重扣 / 跨链独立计数 / bypass 不计数）。
+- 新增 `scripts/quota_probe_rc13.mjs`（随包发布）：15 断言可复现探针，覆盖同链不重扣 /
+  跨链独立 / bypass / pipeline 整链只扣 1 次（修复前 +3）/ 直调脱闸防护 / 用尽抛错与
+  引导文案 / 静态回归，发布后从 tarball 复跑。
+
 ## [1.0.0-rc.12] - 2026-10-14
 
 ### Added

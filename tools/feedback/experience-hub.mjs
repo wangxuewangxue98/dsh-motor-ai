@@ -93,12 +93,13 @@ function cmdCapture(args) {
     const spec = sampleSpec(rand, i)
     let built
     try {
-      built = buildParamMatrix(spec, { maxMatrixSize: 2000 })
+      // rc.13：离线批量采样显式 bypass，不占用户每日额度（对齐 l0 v0.5.1）
+      built = buildParamMatrix(spec, { freeQuotaEnabled: false, maxMatrixSize: 2000 })
     } catch (_) { matrixSkipped++; continue }
     if (!built.matrix?.length) { matrixSkipped++; continue }
     let est
     try {
-      est = runL0Estimate({ params_list: built.matrix, top_n: 0, sort_by: 'efficiency' }, {})
+      est = runL0Estimate({ params_list: built.matrix, top_n: 0, sort_by: 'efficiency' }, { freeQuotaEnabled: false })
     } catch (_) { matrixSkipped++; continue }
     for (const row of est.results ?? []) {
       const p = row.params ?? {}

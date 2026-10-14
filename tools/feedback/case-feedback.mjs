@@ -119,7 +119,8 @@ export function buildCaseFeedbackDraft(opts = {}) {
   for (const c of cases) {
     let matrix = []
     try {
-      matrix = buildParamMatrix({ ...c.spec, count })?.matrix ?? []
+      // rc.13：离线聚合批量调用显式 bypass，不占用户每日额度（对齐 l0 v0.5.1）
+      matrix = buildParamMatrix({ ...c.spec, count }, { freeQuotaEnabled: false })?.matrix ?? []
     } catch (e) {
       matrix = []
     }

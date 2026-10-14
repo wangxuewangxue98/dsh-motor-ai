@@ -36,7 +36,7 @@ import {
 } from '@wangxue98/dsh-motor-ai-core'
 import { computeTorque, computeD2L, computeLambda, validateLambda, deriveElectricalClosure } from '@wangxue98/dsh-motor-ai-core'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
-import { enforceQuota, assertFreeQuota } from '../../lib/quota.mjs'
+import { assertFreeQuota, QuotaExceededError } from '../../lib/quota.mjs'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
 
 /** 工具入参声明（与 defineTool.parameters 保持一对一，避免两边漂移） */
@@ -152,7 +152,10 @@ export function defaultOdLimit(baseD, scanRange, poleList, ratioOf) {
 }
 
 export function buildParamMatrix(rawSpec, config = {}) {
-  assertFreeQuota('motor_param_matrix')
+  if (!config || typeof config !== 'object') config = {}
+  // rc.13 P0-门1（对齐 l0 v0.5.1）：纯函数入口过闸（脚本/CI 直调不再脱闸），
+  // 同一调用链（同一 config 引用）只扣 1 次，pipeline 连调不重复扣。
+  assertFreeQuota('motor_param_matrix', config)
   const { spec, applied } = normalizeSpec(rawSpec)
   const maxMatrixSize = config.maxMatrixSize ?? 2000
 
@@ -493,10 +496,9 @@ export async function registerParamMatrix(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args) {
-      const quotaErr = await enforceQuota(config)
-      if (quotaErr) return quotaErr.error
       const t0 = Date.now()
       try {
+        // rc.13：闸门内聚到 buildParamMatrix 纯函数入口（P0-门1）。
         const result = buildParamMatrix(args, config)
         logUsage(getUsageSink(config), {
           tool: 'motor_param_matrix', ok: true, elapsed_ms: Date.now() - t0,
@@ -505,6 +507,13 @@ export async function registerParamMatrix(ctx, config = {}) {
         scheduleTelemetry(config)
         return JSON.stringify(result, null, 2)
       } catch (err) {
+        if (err instanceof QuotaExceededError) {
+          logUsage(getUsageSink(config), {
+            tool: 'motor_param_matrix', ok: false, elapsed_ms: Date.now() - t0,
+            error: 'quota-exhausted',
+          })
+          return err.message
+        }
         logUsage(getUsageSink(config), {
           tool: 'motor_param_matrix', ok: false, elapsed_ms: Date.now() - t0,
           error: String(err?.message ?? err),

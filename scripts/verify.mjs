@@ -444,6 +444,23 @@ try {
     const weird = await quota.checkFreeQuota({ backendUrl: 'http://mock.local' })
     if (weird.allowed !== true) hBad.push('非预期响应未 fail-open')
 
+    // 3b) rc.13 P0-门1 运行时语义：一次性消费标记 + freeQuotaEnabled bypass + 跨链独立计数
+    rmSync(qFile, { force: true })
+    {
+      const chainA = {}, chainB = {}, bypass = { freeQuotaEnabled: false }
+      quota.assertFreeQuota('rt-a', chainA)
+      quota.assertFreeQuota('rt-a2', chainA) // 同一 config → 不重复扣
+      let st = JSON.parse(readFileSync(qFile, 'utf8'))
+      if (st.free !== 1) hBad.push(`同一调用链重复扣次：free=${st.free}`)
+      quota.assertFreeQuota('rt-b', chainB) // 不同 config → 独立计数
+      st = JSON.parse(readFileSync(qFile, 'utf8'))
+      if (st.free !== 2) hBad.push(`跨调用链未独立计数：free=${st.free}`)
+      quota.assertFreeQuota('rt-off', bypass) // 运维开关 → 不计数
+      st = JSON.parse(readFileSync(qFile, 'utf8'))
+      if (st.free !== 2) hBad.push(`freeQuotaEnabled:false 未 bypass：free=${st.free}`)
+      rmSync(qFile, { force: true })
+    }
+
     // 4) 已激活不请求后端：即便 fetch 抛错也应 reason=activated
     lic.saveActivationState({
       active: true, tier: 'full', buyer: 't', keyId: 'k', source: 'online',
@@ -463,15 +480,27 @@ try {
     if (lic.laterExpiry(null, early) !== early) hBad.push('laterExpiry 单侧缺失处理错误')
     if (lic.laterExpiry(null, null) !== null) hBad.push('laterExpiry 双侧缺失应返回 null')
 
-    // 6) L0 四工具均接入闸门（静态检查：import + execute 内调用 + 内部函数硬闸植入）
+    // 6) L0 四工具均接入闸门（rc.13 P0-门1，对齐 l0 v0.5.1 接线形态）：
+    //    静态 = import assertFreeQuota/QuotaExceededError + 纯函数入口过闸 +
+    //    execute 捕获 QuotaExceededError + 禁 await enforceQuota 旧写法（双重扣次）
     const l0Dir = join(ROOT, 'tools', 'l0')
     for (const f of ['param-matrix.mjs', 'l0-estimate.mjs', 'design-validate.mjs', 'pipeline.mjs']) {
       const src = readFileSync(join(l0Dir, f), 'utf8')
-      if (!src.includes("from '../../lib/quota.mjs'")) hBad.push(`${f} 未 import quota`)
-      if (!/enforceQuota\(config\)/.test(src)) hBad.push(`${f} execute 未调用 enforceQuota`)
+      if (!/import\s*\{[^}]*assertFreeQuota[^}]*\}\s*from\s*'\.\.\/\.\.\/lib\/quota\.mjs'/.test(src)) {
+        hBad.push(`${f} 缺少 assertFreeQuota import`)
+      }
+      if (!/import\s*\{[^}]*QuotaExceededError[^}]*\}\s*from\s*'\.\.\/\.\.\/lib\/quota\.mjs'/.test(src)) {
+        hBad.push(`${f} 缺少 QuotaExceededError import`)
+      }
       // 离线硬限防绕过：内部计算函数顶部必须植入 assertFreeQuota，
       // 否则「绕过工具网关、直调内部纯函数」可无限使用。
       if (!/assertFreeQuota\(/.test(src)) hBad.push(`${f} 内部函数未植入 assertFreeQuota（可绕过硬限）`)
+      if (!/err\s+instanceof\s+QuotaExceededError/.test(src)) {
+        hBad.push(`${f} execute 未捕获 QuotaExceededError（用尽时回不了引导文案）`)
+      }
+      if (/await\s+enforceQuota\(config\)/.test(src)) {
+        hBad.push(`${f} execute 仍 await enforceQuota（与纯函数入口双重扣次，rc.13 已废弃该写法）`)
+      }
     }
 
     // 6b) L1/L2 付费档主力路径同样必须接入闸门（付费档 9999/天 宽松硬顶，防脚本批量刷用）；

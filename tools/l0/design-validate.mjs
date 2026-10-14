@@ -22,7 +22,7 @@ import { validateDesign, validateDesignBatch, RULE_CATALOG, ESCALATABLE_RULES }
 import { normalizeSpec } from '@wangxue98/dsh-motor-ai-core'
 import { DEFAULT_LINE_FREQ_HZ } from '@wangxue98/dsh-motor-ai-core'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
-import { enforceQuota, assertFreeQuota } from '../../lib/quota.mjs'
+import { assertFreeQuota, QuotaExceededError } from '../../lib/quota.mjs'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
 
 /** 工具入参声明 */
@@ -57,7 +57,10 @@ export const TOOL_PARAMS = {
  * @param {object} [config] 插件配置：{ efficiencyCap, tempRiseRange }
  */
 export function runDesignValidate(rawArgs, config = {}) {
-  assertFreeQuota('motor_design_validate')
+  if (!config || typeof config !== 'object') config = {}
+  // rc.13 P0-门1（对齐 l0 v0.5.1）：纯函数入口过闸（脚本/CI 直调不再脱闸），
+  // 同一调用链（同一 config 引用）只扣 1 次，pipeline 连调不重复扣。
+  assertFreeQuota('motor_design_validate', config)
   const { spec: args } = normalizeSpec(rawArgs ?? {})
 
   // 优先级：工具入参 > 插件配置 > 常量默认
@@ -152,10 +155,9 @@ export async function registerDesignValidate(ctx, config = {}) {
       render: (_args, value) => [{ type: 'text', text: value }],
     },
     async execute(args) {
-      const quotaErr = await enforceQuota(config)
-      if (quotaErr) return quotaErr.error
       const t0 = Date.now()
       try {
+        // rc.13：闸门内聚到 runDesignValidate 纯函数入口（P0-门1）。
         const result = runDesignValidate(args, config)
         logUsage(getUsageSink(config), {
           tool: 'motor_design_validate', ok: true, elapsed_ms: Date.now() - t0,
@@ -165,6 +167,13 @@ export async function registerDesignValidate(ctx, config = {}) {
         scheduleTelemetry(config)
         return JSON.stringify(result, null, 2)
       } catch (err) {
+        if (err instanceof QuotaExceededError) {
+          logUsage(getUsageSink(config), {
+            tool: 'motor_design_validate', ok: false, elapsed_ms: Date.now() - t0,
+            error: 'quota-exhausted',
+          })
+          return err.message
+        }
         logUsage(getUsageSink(config), {
           tool: 'motor_design_validate', ok: false, elapsed_ms: Date.now() - t0,
           error: String(err?.message ?? err),
