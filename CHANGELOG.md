@@ -1,3 +1,36 @@
+## [1.0.0-rc.12] - 2026-10-14
+
+### Added
+- **L1/L2 环境自动搜寻 + 引导（env-probe）**：授权通过后、真解算前自动体检五项
+  （Python 候选链 / pyaedt / pywin32 / Ansys AEDT / Motor-CAD）——新增
+  `lib/env-probe.mjs`（探测矩阵 + 全盘常见布局扫描，含 D/E 盘工业软件惯例位置）
+  与 `motor_env_check` 一键体检工具（免费、不占配额、随时可调，输出人话修复指引：
+  下载页 / pip install / 环境变量 / DSH 配置键）。L1 三 execute 与 L2
+  `motor_motorcad_verify` 在 license 闸后、配额消耗前预检：缺项直接返回
+  `ENV_NOT_READY` 结构化引导，**不白耗 60-120s AEDT/COM 启动、不扣当日配额**
+  （环境损坏 + 配额用尽的用户仍可用 motor_env_check 自救）。
+- **worker `--preflight` 死参数实现**：`scripts/_rmxprt_venv_worker.py` 的
+  `--preflight` 此前声明未消费（argparse required 三件套还会误拦）；现为秒级
+  预检模式（探测 pyaedt/pywin32/AEDT exe，输出 JSON + hints），不启动 Desktop；
+  正常求解模式仍校验三件套（防呆文案同时提示两种模式）。
+
+### Fixed
+- `buildEnvGuide` nextSteps 编号：多缺失项拼接后重编号为连续序号（原 1./2./3. × N 重复）。
+- worker `--params/--output/--var-map` 由 argparse required 改为模式内校验，preflight 免检。
+
+### Changed
+- `manifest.json` tools 声明补 `motor_env_check`（11 个）；README 工具表补一行 +
+  rc.12 环境自动搜寻说明段。
+- `CONFIG_SCHEMA` 补声明 `l1Python`（env-probe 候选链读取，与 `motorcadPython` 并列）。
+
+### Gates & Tests
+- `scripts/verify.mjs` 新门禁 **6g**：env-probe 导出 / env-check 工具名与遥测 /
+  index 注册 / manifest 声明 / L1×3+L2×1 接线数 / worker preflight 消费 / l1Python
+  声明 / probeAll 矩阵与 guide 结构功能验证。
+- `tests/env-probe.test.mjs` 30 用例全过（候选链 / guide 编号 / mock 文件系统探测 /
+  真实解释器模块探测 / probeAll 结构 / worker preflight spawn 冒烟 / 缺参防呆）；
+  既有 7 套回归全绿。
+
 ## [1.0.0-rc.11] - 2026-10-14
 
 ### Added

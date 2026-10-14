@@ -3497,11 +3497,72 @@ def _append_progress(entry):
         pass
 
 
+def _run_preflight(args):
+    """环境预检（--preflight）：不启动 AEDT Desktop，秒级完成。
+
+    供插件侧 lib/env-probe.mjs / motor_env_check 工具在真解算前调用：
+    确认本解释器有 pyaedt + pywin32，并尽力定位 ansysedt.exe（advisory，
+    pyaedt 自身还能从注册表定位安装）。
+
+    输出（stdout 单行 JSON）:
+      {ok, pyaedt, pyaedt_version, pywin32, aedt_exe, python, hints[]}
+    """
+    import glob
+
+    report = {
+        "ok": False,
+        "python": sys.executable,
+        "pyaedt": False,
+        "pyaedt_version": None,
+        "pywin32": False,
+        "aedt_exe": None,
+        "hints": [],
+    }
+    try:
+        import pyaedt
+        report["pyaedt"] = True
+        report["pyaedt_version"] = getattr(pyaedt, "__version__", "unknown")
+    except Exception as e:
+        report["hints"].append(
+            f'缺少 pyaedt（{type(e).__name__}）：请用本解释器执行 pip install "pyaedt==0.6.*"')
+    try:
+        import pythoncom  # noqa: F401
+        import win32com.client  # noqa: F401
+        report["pywin32"] = True
+    except Exception:
+        report["hints"].append("缺少 pywin32：请用本解释器执行 pip install pywin32")
+
+    # AEDT exe 定位（advisory）：ANSYSEM_ROOT 类环境变量 > 各盘 Program Files\AnsysEM
+    roots = [os.environ.get("ANSYSEM_ROOT"), os.environ.get("ANSYS_EM_ROOT"),
+             os.environ.get("AEDT_ROOT")]
+    for pf in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"),
+               os.environ.get("ProgramFiles(x86)"), "D:\\Program Files", "E:\\Program Files"):
+        if pf:
+            roots.append(os.path.join(pf, "AnsysEM"))
+    seen = set()
+    for r in roots:
+        if not r or r in seen or not os.path.isdir(r):
+            continue
+        seen.add(r)
+        for pattern in ("*/Win64/ansysedt.exe", "*/ansysedt.exe", "ansysedt.exe"):
+            hits = sorted(glob.glob(os.path.join(r, pattern)))
+            if hits:
+                report["aedt_exe"] = hits[0]
+                break
+        if report["aedt_exe"]:
+            break
+    if not report["aedt_exe"]:
+        report["hints"].append(
+            "未找到 ansysedt.exe：请安装 Ansys AEDT 2020.x，或设置环境变量 ANSYSEM_ROOT 指向安装根目录")
+    report["ok"] = bool(report["pyaedt"] and report["pywin32"])
+    print(json.dumps(report, ensure_ascii=False))
+
+
 def main():
     parser = argparse.ArgumentParser(description="RMxprt venv worker v3 (Python 3.10)")
-    parser.add_argument("--params", required=True, help="Input params JSON path")
-    parser.add_argument("--output", required=True, help="Output results JSON path")
-    parser.add_argument("--var-map", required=True, help="Variable map JSON path")
+    parser.add_argument("--params", help="Input params JSON path")
+    parser.add_argument("--output", help="Output results JSON path")
+    parser.add_argument("--var-map", help="Variable map JSON path")
     parser.add_argument("--aedt-version", default="2020.1", help="AEDT version")
     parser.add_argument("--machine-type", default="induction",
                         help="Machine type (induction/pmsm/bldc/srm/synrm/wound_sync/sync_generator/lssm/universal/claw_pole/afpm/flux_switching/induction_single_phase)")
@@ -3513,6 +3574,15 @@ def main():
     parser.add_argument("--no-diff-kill", action="store_true",
                         help="并行分片模式: AEDT 清理仅回收孤儿, 跳过本批差集(避免误杀兄弟分片)")
     args = parser.parse_args()
+
+    # 环境预检模式：秒级完成，不加载输入、不启动 AEDT、不清理进程
+    if getattr(args, "preflight", False):
+        _run_preflight(args)
+        return
+
+    # 正常求解模式：三件套必填（preflight 免检）
+    if not args.params or not args.output or not args.var_map:
+        parser.error("正常求解模式需要 --params / --output / --var-map（--preflight 预检模式除外）")
 
     global _HEARTBEAT_PATH, _PROGRESS_PATH, _NO_DIFF_KILL
     _HEARTBEAT_PATH = args.heartbeat or ""

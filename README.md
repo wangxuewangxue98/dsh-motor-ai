@@ -65,11 +65,14 @@ npm install dsh-motor-ai@next
 | L1 | motor_rmxprt_solve | RMxprt 单解 | ⚙️ 随包分发，需本机 AEDT |
 | L2 | motor_l2_validate | 几何校验 | ⚙️ 随包分发，需本机 Motor-CAD |
 | L2 | motor_motorcad_verify | COM 验证 | ⚙️ 随包分发，需本机 Motor-CAD |
+| 通用 | motor_env_check | L1/L2 环境一键体检 + 修复引导 | ✅ 免费、不占配额 |
 
 > **求解器依赖说明（rc.11 起）**：L1/L2 的求解器脚本已随包分发（`scripts/_rmxprt_venv_worker.py` / `scripts/motorcad_bridge.py`），装完即可用；但**本机仍需安装对应商业求解器**：
 > - **L1**：Ansys AEDT 2020.x（RMxprt）+ Python 3.10 环境装有 `pyaedt 0.6.x` 或 `pywin32`；解释器路径用 `PYTHON_BIN` 指定，worker 可用 `RMXPRT_WORKER_PATH` 覆盖（默认用包内副本）
 > - **L2**：Motor-CAD v11.1.5（`MotorCAD.AppAutomation`）+ Python 3.10 环境装有 `pywin32`；路径用 `MOTORCAD_PATH` / `MOTORCAD_INSTALL_DIR` 指定
 > 未装求解器时调用返回结构化错误引导，不影响 L0。
+>
+> **环境自动搜寻与引导（rc.12 起）**：授权通过后，L1/L2 真解算前会自动体检五项环境（Python / pyaedt / pywin32 / AEDT / Motor-CAD）——缺失项直接返回人话修复指引（下载页 / pip 命令 / 环境变量 / 配置键），**不会白耗 60-120s 的 AEDT/COM 启动，也不扣当日配额**。任何时候都可用 `motor_env_check` 一键体检（免费、不占配额）。
 
 ## 互斥规则
 

@@ -20,6 +20,7 @@ import {
   tierOf,
 } from '@wangxue98/dsh-motor-ai-core'
 import { registerL0Tools, L0_TOOL_NAMES } from './tools/l0/index.mjs'
+import { registerEnvCheck, ENV_CHECK_TOOL_NAME } from './tools/env-check.mjs'
 
 // L1/L2 占位工具注册器（后续实现）
 import { registerL1Placeholders } from './tools/l1/index.mjs'
@@ -90,6 +91,10 @@ export async function registerAll(ctx, config = {}) {
   } else {
     skipped.push(...L0_TOOL_NAMES)
   }
+
+  // 环境体检工具始终注册（免费、不占配额——自检/自救通道，见 tools/env-check.mjs 设计决策）
+  await registerEnvCheck(ctx, config)
+  registered.push(ENV_CHECK_TOOL_NAME)
 
   // L1 始终注册（工具恒存在）；调用时按许可证门控——
   // 无码/过期/无效 → 返回 LICENSE_REQUIRED 引导，L0 不受影响（落实引流触点 2）
@@ -249,6 +254,11 @@ const CONFIG_SCHEMA = {
       type: 'string',
       default: 'MotorCAD.AppAutomation',
       description: 'Motor-CAD COM ProgID',
+    },
+    l1Python: {
+      type: 'string',
+      default: '',
+      description: '驱动 RMxprt worker 的 Python 解释器路径（需 pyaedt）；空 = 依次探测 PYTHON_BIN/PATH；motorcadPython 优先于本键',
     },
     motorcadPython: {
       type: 'string',

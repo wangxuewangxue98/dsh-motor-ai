@@ -557,6 +557,8 @@ try {
           'lib/quota.mjs', 'lib/license.mjs', 'lib/telemetry.mjs',
           'lib/usage-log.mjs', 'lib/experience-upload.mjs', 'lib/regression-gate.mjs',
           'lib/surrogate-engine.mjs', 'lib/formula-engine.mjs',
+          'lib/env-probe.mjs',
+          'tools/env-check.mjs',
           'tools/l0/param-matrix.mjs', 'tools/l0/l0-estimate.mjs',
           'tools/l0/pipeline.mjs', 'tools/l0/design-validate.mjs',
           'tools/l1/rmxprt-solve.mjs', 'tools/l2/motorcad-verify.mjs',
@@ -578,6 +580,74 @@ try {
         }
         const l1 = readFileSync(join(ROOT, 'tools', 'l1', 'rmxprt-solve.mjs'), 'utf8')
         if (!/bundledWorkerPath/.test(l1)) hBad.push('L1 缺包内 worker 解析（bundledWorkerPath），分发版只能靠外部路径')
+      }
+    }
+
+    // 6g) rc.12：L1/L2 环境预检 + 引导（env-probe 接线不可回退）
+    //     - lib/env-probe.mjs 必须导出探测矩阵与引导构建器；
+    //     - motor_env_check 工具必须注册（index.mjs import + registerAll 调用 + manifest tools 声明）；
+    //     - L1 三 execute / L2 motor_motorcad_verify 必须在 license 闸后、配额消耗前预检
+    //       （缺项返回 ENV_NOT_READY 引导，不白耗 AEDT/COM 启动、不扣配额）；
+    //     - worker --preflight 必须真实消费（rc.11 前是声明未实现的死参数）；
+    //     - CONFIG_SCHEMA 必须声明 l1Python（env-probe 候选链读取）。
+    {
+      const ep = join(ROOT, 'lib', 'env-probe.mjs')
+      if (!existsSync(ep)) {
+        hBad.push('lib/env-probe.mjs 缺失（环境预检模块）')
+      } else {
+        const src = readFileSync(ep, 'utf8')
+        for (const fn of ['export async function probeL1', 'export async function probeL2',
+          'export async function probeAll', 'export function buildEnvGuide',
+          'export function formatProbeReport', 'export const PROBE_ITEMS']) {
+          if (!src.includes(fn)) hBad.push(`env-probe.mjs 缺导出：${fn}`)
+        }
+      }
+      const ec = join(ROOT, 'tools', 'env-check.mjs')
+      if (!existsSync(ec)) {
+        hBad.push('tools/env-check.mjs 缺失（motor_env_check 一键体检）')
+      } else {
+        const src = readFileSync(ec, 'utf8')
+        if (!src.includes("ENV_CHECK_TOOL_NAME = 'motor_env_check'")) hBad.push('env-check.mjs 工具名不是 motor_env_check')
+        if (!/scheduleTelemetry/.test(src)) hBad.push('env-check.mjs 未挂遥测（环境分布统计通道）')
+      }
+      const idxSrc2 = readFileSync(join(ROOT, 'index.mjs'), 'utf8')
+      if (!idxSrc2.includes("from './tools/env-check.mjs'")) hBad.push('index.mjs 未 import registerEnvCheck')
+      if (!/await registerEnvCheck\(ctx, config\)/.test(idxSrc2)) hBad.push('registerAll 未调用 registerEnvCheck')
+      if (!/l1Python:/.test(idxSrc2)) hBad.push('CONFIG_SCHEMA 未声明 l1Python（DSH 会裁键 → 候选链读不到）')
+      const manifest = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'))
+      if (!Array.isArray(manifest.tools) || !manifest.tools.includes('motor_env_check')) {
+        hBad.push('manifest.json tools 未声明 motor_env_check')
+      }
+      const l1src = readFileSync(join(ROOT, 'tools', 'l1', 'rmxprt-solve.mjs'), 'utf8')
+      const l1Hooks = (l1src.match(/await probeL1\(config\)/g) || []).length
+      if (l1Hooks !== 3) hBad.push(`L1 预检接线数=${l1Hooks}（应为 3：estimate/pipeline/solve）`)
+      if (!l1src.includes('probeL1, buildEnvGuide')) hBad.push('L1 未 import probeL1/buildEnvGuide')
+      const l2src = readFileSync(join(ROOT, 'tools', 'l2', 'motorcad-verify.mjs'), 'utf8')
+      if (!/await probeL2\(config\)/.test(l2src)) hBad.push('L2 motor_motorcad_verify 未接线 probeL2 预检')
+      if (!l2src.includes('probeL2, buildEnvGuide')) hBad.push('L2 未 import probeL2/buildEnvGuide')
+      // worker --preflight 死参数必须真实消费
+      const wsrc = readFileSync(join(ROOT, 'scripts', '_rmxprt_venv_worker.py'), 'utf8')
+      if (!wsrc.includes('def _run_preflight')) hBad.push('worker 缺 _run_preflight 实现（--preflight 仍是死参数）')
+      if (!/getattr\(args, "preflight", False\)/.test(wsrc)) hBad.push('worker main 未消费 --preflight')
+      // 功能验证：探测矩阵结构（真实 spawn python，~1-2s）
+      const epMod = await import(pathToFileURL(ep).href)
+      const all = await epMod.probeAll({})
+      for (const lvl of ['l1', 'l2']) {
+        const keys = all[lvl].items.map((i) => i.key)
+        if (!keys.includes('python')) hBad.push(`probeAll(${lvl}).items 缺 python`)
+      }
+      if (!(all.l1.items.some((i) => i.key === 'pyaedt') && all.l1.items.some((i) => i.key === 'aedt'))) {
+        hBad.push('probeAll(l1) 项矩阵不完整（应含 pyaedt + aedt）')
+      }
+      if (!(all.l2.items.some((i) => i.key === 'pywin32') && all.l2.items.some((i) => i.key === 'motorcad'))) {
+        hBad.push('probeAll(l2) 项矩阵不完整（应含 pywin32 + motorcad）')
+      }
+      const guide = epMod.buildEnvGuide('l1', [{ key: 'pyaedt' }, { key: 'aedt' }])
+      if (guide.status !== 'env_not_ready' || !guide.guide?.nextSteps?.length) {
+        hBad.push('buildEnvGuide 结构不完整（status/nextSteps）')
+      }
+      if (guide.guide.nextSteps.some((s, i) => !s.startsWith(`${i + 1}.`))) {
+        hBad.push('buildEnvGuide nextSteps 编号不连续')
       }
     }
 

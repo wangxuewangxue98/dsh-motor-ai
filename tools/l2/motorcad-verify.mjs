@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
 import { getL1L2License, buildActivationGuide } from '../../lib/license.mjs'
 import { enforceQuota } from '../../lib/quota.mjs'
+import { probeL2, buildEnvGuide } from '../../lib/env-probe.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
 
@@ -411,6 +412,23 @@ export async function registerMotorCADVerify(ctx, config = {}) {
       const __run = async () => {
       const actCheck = await checkL2License({})
       if (actCheck && !actCheck.authorized) return actCheck
+
+      // 环境预检（license 放行后、配额消耗前）：python/pywin32/Motor-CAD 缺项
+      // 直接返回引导，不白耗 90s COM 启动、不扣当日配额（motor_env_check 可随时复检）
+      const env = await probeL2(config)
+      if (!env.ready) {
+        const guide = buildEnvGuide('l2', env.missing)
+        return {
+          status: 'env_not_ready',
+          error: 'ENV_NOT_READY',
+          tool: 'motor_motorcad_verify',
+          level: 'l2',
+          message: guide.message,
+          missing: guide.missing,
+          probe: guide.probe,
+          guide: guide.guide,
+        }
+      }
 
       // 每日额度闸（免费档 10 次/天；付费档 9999 次/天宽松硬顶，防脚本滥用）
       const quotaErr = await enforceQuota(config)
