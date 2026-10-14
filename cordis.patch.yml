@@ -43,6 +43,11 @@
         telemetryBatchSize: 50
         telemetryMinIntervalMs: 60000      # 上报尝试最小间隔（0=不节流；兼容旧键 telemetryIntervalSec）
         sessionTelemetry: 'auto'           # auto = 顺带挂 DSH sessionTelemetry
+        # ---- 免费额度旁路计数后端（P1 对齐 l0：预填官方接收端，2026-10-14）----
+        # 仅旁路遥测用（fire-and-forget，不参与放行决策、不阻塞调用链；放行 100% 本地）。
+        # 官方接收端（Deno Deploy 2，境内直连可达）：https://dsh-motor-ai-receiver.wangxuewangxue98.deno.net
+        # 置空串 = 不发旁路计数（回退 env.DSH_BACKEND_URL → http://127.0.0.1:5000）。
+        commerceBackendUrl: 'https://dsh-motor-ai-receiver.wangxuewangxue98.deno.net'
         # ---- 脱敏设计经验回传（默认关闭；用于 L0 代理重训）----
         designExperienceUpload: false
         experienceEndpoint: ''             # 空 = 回退复用 telemetryEndpoint
