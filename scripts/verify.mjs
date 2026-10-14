@@ -444,20 +444,30 @@ try {
     const weird = await quota.checkFreeQuota({ backendUrl: 'http://mock.local' })
     if (weird.allowed !== true) hBad.push('非预期响应未 fail-open')
 
-    // 3b) rc.13 P0-门1 运行时语义：一次性消费标记 + freeQuotaEnabled bypass + 跨链独立计数
+    // 3b) rc.13 P0-门1 运行时语义（rc.14 升级：同链判据 = 调用链令牌）
+    //     + P0-门1' 回归：同一 config 引用 + **同步循环**必须各计一次
     rmSync(qFile, { force: true })
     {
-      const chainA = {}, chainB = {}, bypass = { freeQuotaEnabled: false }
-      quota.assertFreeQuota('rt-a', chainA)
-      quota.assertFreeQuota('rt-a2', chainA) // 同一 config → 不重复扣
+      const bypass = { freeQuotaEnabled: false }
+      const tokA = quota.newQuotaChain()
+      quota.assertFreeQuota('rt-a', quota.withQuotaChain({}, tokA))
+      quota.assertFreeQuota('rt-a2', quota.withQuotaChain({}, tokA)) // 同链令牌 → 不重复扣
       let st = JSON.parse(readFileSync(qFile, 'utf8'))
       if (st.free !== 1) hBad.push(`同一调用链重复扣次：free=${st.free}`)
-      quota.assertFreeQuota('rt-b', chainB) // 不同 config → 独立计数
+      const tokB = quota.newQuotaChain()
+      quota.assertFreeQuota('rt-b', quota.withQuotaChain({}, tokB)) // 不同链 → 独立计数
       st = JSON.parse(readFileSync(qFile, 'utf8'))
       if (st.free !== 2) hBad.push(`跨调用链未独立计数：free=${st.free}`)
+      // P0-门1'：同一 config 引用 + 同步循环 ⇒ 各计一次（rc.13 此处整批只扣 1 次）
+      const sameCfg = {}
+      quota.assertFreeQuota('rt-s1', sameCfg)
+      quota.assertFreeQuota('rt-s2', sameCfg)
+      quota.assertFreeQuota('rt-s3', sameCfg)
+      st = JSON.parse(readFileSync(qFile, 'utf8'))
+      if (st.free !== 5) hBad.push(`P0-门1' 同步循环脱闸：期望 free=5，实得 ${st.free}`)
       quota.assertFreeQuota('rt-off', bypass) // 运维开关 → 不计数
       st = JSON.parse(readFileSync(qFile, 'utf8'))
-      if (st.free !== 2) hBad.push(`freeQuotaEnabled:false 未 bypass：free=${st.free}`)
+      if (st.free !== 5) hBad.push(`freeQuotaEnabled:false 未 bypass：free=${st.free}`)
       rmSync(qFile, { force: true })
     }
 
@@ -501,6 +511,27 @@ try {
       if (/await\s+enforceQuota\(config\)/.test(src)) {
         hBad.push(`${f} execute 仍 await enforceQuota（与纯函数入口双重扣次，rc.13 已废弃该写法）`)
       }
+    }
+
+    // 6a) rc.14 P0-门1'（对齐 l0 v0.5.2）：同链判据必须是**显式调用链令牌**，
+    //     禁止退回「_consumed WeakSet(key=config 对象) + queueMicrotask 复位」——
+    //     该写法在同步批量循环（CI/压测典型形态）里微任务不穿插 ⇒ 整批只扣 1 次。
+    {
+      const q = readFileSync(join(ROOT, 'lib', 'quota.mjs'), 'utf8')
+      if (!/export\s+function\s+newQuotaChain/.test(q)) hBad.push('缺少 export newQuotaChain（rc.14 调用链令牌）')
+      if (!/export\s+function\s+withQuotaChain/.test(q)) hBad.push('缺少 export withQuotaChain（rc.14 同链派生）')
+      if (/function\s+alreadyConsumed\s*\(\s*config\s*\)/.test(q)) {
+        hBad.push('quota.mjs 仍按 config 对象引用判同链（rc.13 缺陷形态：同步批量脱闸）')
+      }
+      if (/markConsumed\(config\)/.test(q)) {
+        hBad.push('quota.mjs 仍按 config 对象标记消费（rc.14 应改为按调用链令牌标记）')
+      }
+      const pl = readFileSync(join(l0Dir, 'pipeline.mjs'), 'utf8')
+      if (!/const\s+chain\s*=\s*newQuotaChain\(\)/.test(pl)) hBad.push('pipeline.mjs 未新建调用链令牌')
+      if (!/withQuotaChain\(config,\s*chain\)/.test(pl)) hBad.push('pipeline.mjs 未派生带令牌配置')
+      if (!/buildParamMatrix\(args,\s*chainCfg\)/.test(pl)) hBad.push('pipeline.mjs 未把带令牌配置透传给 buildParamMatrix')
+      if (!/runDesignValidate\(\{[^}]*\},\s*chainCfg\)/.test(pl)) hBad.push('pipeline.mjs 未把带令牌配置透传给 runDesignValidate')
+      if (!/runL0Estimate\([\s\S]*?\},[\s\S]*?chainCfg\)/.test(pl)) hBad.push('pipeline.mjs 未把带令牌配置透传给 runL0Estimate')
     }
 
     // 6b) L1/L2 付费档主力路径同样必须接入闸门（付费档 9999/天 宽松硬顶，防脚本批量刷用）；

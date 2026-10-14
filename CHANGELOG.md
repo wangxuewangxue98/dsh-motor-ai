@@ -1,3 +1,24 @@
+## [1.0.0-rc.14] - 2026-10-15
+
+### Fixed
+- **P0-门1'（对齐 l0 v0.5.2）同步批量脱闸**：rc.13 的「同链只扣 1 次」用
+  「`_consumed` WeakSet（key = config 对象）+ `queueMicrotask` 复位」实现 —— 同步 for
+  循环复用同一 config 引用时微任务不穿插执行，第 2~N 次 `alreadyConsumed()` 恒为 true，
+  **整批只扣 1 次、12 次全部放行**（CI 脚本 / 压测循环正是这种写法，门禁形同虚设）。
+  判据改为**显式调用链令牌**：新增 `newQuotaChain()` / `withQuotaChain(config, token)`，
+  聚合入口 `runL0Pipeline` 每次调用新建唯一令牌并派生带令牌的 `chainCfg` 透传给三个子
+  纯函数 ⇒ 整链仍只扣 1 次，而循环调用因令牌唯一 ⇒ **各计一次**、第 11 次起拦截。
+  注：rc.13 探针 [A] 组传同一 config 对象，恰好依赖该缺陷 ⇒ 假绿灯（与 l0 同款教训）。
+
+### Gates & Tests
+- `scripts/verify.mjs` 门禁 H 升级：新增静态块 6a（必须导出 `newQuotaChain` /
+  `withQuotaChain`；禁止 `function alreadyConsumed(config)` / `markConsumed(config)` 的
+  config 引用形态；pipeline 必须把带令牌配置透传给三个子纯函数）+ 运行时用例 3b 扩展
+  （同令牌不重扣 / 跨链独立计数 / **同一 config 引用 + 同步循环 ×3 = +3** / bypass 不计数）。
+- 新增 `scripts/quota_probe_rc14.mjs`（随包发布）：20 断言，新增 [A-same] 组
+  （同一 config 引用 + 同步循环各计一次，且 limit=2 时第 3 次触顶被拦 —— rc.13 该形态
+  永不触顶），[G] 组新增调用链令牌静态回归。
+
 ## [1.0.0-rc.13] - 2026-10-15
 
 ### Fixed

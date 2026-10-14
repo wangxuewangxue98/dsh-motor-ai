@@ -22,7 +22,7 @@ import { buildParamMatrix } from './param-matrix.mjs'
 import { runDesignValidate } from './design-validate.mjs'
 import { runL0Estimate } from './l0-estimate.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
-import { assertFreeQuota, QuotaExceededError } from '../../lib/quota.mjs'
+import { assertFreeQuota, QuotaExceededError, newQuotaChain, withQuotaChain } from '../../lib/quota.mjs'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
 
 /** 工具入参声明（矩阵生成参数 + 聚合控制） */
@@ -65,22 +65,27 @@ export const TOOL_PARAMS = {
  */
 export function runL0Pipeline(rawArgs, config = {}) {
   if (!config || typeof config !== 'object') config = {}
-  // rc.13 P0-门1（对齐 l0 v0.5.1）：纯函数入口过闸并传同一 config 引用，
-  // 靠一次性消费标记让整条三步链只扣 1 次；execute 不再单独 enforceQuota
+  // rc.13 P0-门1（对齐 l0 v0.5.1）：纯函数入口过闸；execute 不再单独 enforceQuota
   // （await 边界会放跑消费标记导致双重扣次），改用捕获 QuotaExceededError。
-  assertFreeQuota('motor_l0_pipeline', config)
+  // rc.14 P0-门1'（对齐 l0 v0.5.2）：同链判据改为**显式调用链令牌**——旧写法用
+  // 「config 引用 + 微任务复位」，同步批量循环复用同一 config 引用时微任务不穿插
+  // ⇒ 整批只扣 1 次，门禁被绕。本函数每次调用新建唯一令牌，派生带令牌的 chainCfg
+  // 透传给三个子纯函数 ⇒ 整链仍只扣 1 次，循环调用则各计一次。
+  const chain = newQuotaChain()
+  const chainCfg = withQuotaChain(config, chain)
+  assertFreeQuota('motor_l0_pipeline', chainCfg)
   const { spec: args } = normalizeSpec(rawArgs ?? {})
   const t0 = Date.now()
 
   // ---- 第 1 步：生成参数矩阵 ----
   // 保留完整返回对象：param-matrix 的 warnings / od_limit 必须透传出来，
   // 否则「外径被夹紧」这类会扭曲结论的异常在聚合链路里会被静默吞掉。
-  const matrix = buildParamMatrix(args, config)
+  const matrix = buildParamMatrix(args, chainCfg)
   const allRows = matrix.matrix
   const requestedCount = Math.max(1, Math.floor(args.count ?? 20))
 
   // ---- 第 2 步：批量物理校验 ----
-  const validated = runDesignValidate({ params_list: allRows }, config)
+  const validated = runDesignValidate({ params_list: allRows }, chainCfg)
   const failedSet = new Set(validated.failed_indices ?? [])
   // 剔除 failed（物理不成立），保留 passed + warning
   const feasibleRows = allRows.filter((_, i) => !failedSet.has(i))
@@ -89,7 +94,7 @@ export function runL0Pipeline(rawArgs, config = {}) {
   const topN = Number(args.top_n) > 0 ? Number(args.top_n) : 10
   const sortBy = ['efficiency', 'efficiency_raw', 'torque_density', 'temp_rise', 'total_loss', 'power']
     .includes(args.sort_by) ? args.sort_by : 'efficiency'
-  const estimate = runL0Estimate({ params_list: feasibleRows, top_n: topN, sort_by: sortBy }, config)
+  const estimate = runL0Estimate({ params_list: feasibleRows, top_n: topN, sort_by: sortBy }, chainCfg)
 
   // ---- 计数自洽校验（让模型一眼确认没有丢行）----
   const sumStatus = (validated.summary?.passed ?? 0)
