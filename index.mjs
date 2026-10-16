@@ -348,6 +348,13 @@ const CONFIG_SCHEMA = {
       default: '',
       description: 'MotorDesign 仓库根（求解器路径拼接源）；空 = 用 env MOTORDESIGN_ROOT',
     },
+    // rc.18 补声明：lib/env-probe.mjs:484 读取（env-bootstrap 自定义 venv 目标）；
+    // 不声明会被 DSH 裁键 → 恒 undefined，「自定义 venv 路径」参数失效。
+    bootstrapVenvPath: {
+      type: 'string',
+      default: '',
+      description: 'env-bootstrap 创建 venv 的目标目录；空 = {motorDesignRoot}/venv 或 ~/.dsh-motor-ai/bootstrap-venv',
+    },
     handoffDir: {
       type: 'string',
       default: '',

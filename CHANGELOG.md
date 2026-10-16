@@ -1,3 +1,15 @@
+## [1.0.0-rc.18] - 2026-10-16
+
+### Fixed
+- **G2 门禁 · skills 版本三重一致**：`skills/motor-l0-estimate/SKILL.md`、`skills/motor-design/SKILL.md`
+  的 `metadata.version` 在 rc.17 发版时漏 bump（仍 `1.0.0-rc.16`），`skills/SKILL.md` 更旧（`1.0.0-rc.7`）。
+  本次统一对齐至 `1.0.0-rc.18`，恢复「package.json == CHANGELOG 顶 == 各 skill」三重一致
+  （rc.17 的 G2 FAIL 即由此外泄）。
+- **G4 门禁 · CONFIG_SCHEMA 补声明 `bootstrapVenvPath`**：`lib/env-probe.mjs:484` 读取该键用于
+  env-bootstrap 自定义 venv 目标，但 `index.mjs` 的 `CONFIG_SCHEMA` 未声明 ⇒ DSH 裁键 ⇒ 恒 undefined，
+  「自定义 venv 路径」参数实际不可用（rc.17 的 G4 FAIL）。现补声明，默认空 = 回退
+  `{motorDesignRoot}/venv` 或 `~/.dsh-motor-ai/bootstrap-venv`。
+
 ## [1.0.0-rc.17] - 2026-10-16
 
 ### Fixed
