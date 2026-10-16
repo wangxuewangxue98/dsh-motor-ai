@@ -111,6 +111,57 @@ export function extractRatedPowerW(design = {}) {
 }
 
 /**
+ * L2 外径上限自适应（B 增强）：旧版写死 500mm 误杀 400/450kW 大机座。
+ * 显式传入 limits.statorOdLimit 优先；否则按额定功率经验曲线给宽松上限
+ * （留 ~30% 余量，至少 600mm）；功率未知时给 1000mm 兜底，避免误杀任意大机座。
+ * @param {number|null} powerW 额定功率（W）；可来自 extractRatedPowerW
+ * @returns {number}
+ */
+export function adaptiveStatorOdLimit(powerW) {
+  if (!Number.isFinite(powerW) || powerW <= 0) return 1000
+  const kw = powerW / 1000
+  return Math.max(600, Math.round(kw * 1.5 + 200))
+}
+
+/**
+ * L2 几何一致性校验（纯函数，可单测；motor_l2_validate 内部调用）。
+ * A 增强：兼容 L0 顶层字段名 与 Motor-CAD 原名 双口径，消除 400kW「铁芯长度必须 > 0」；
+ * B 增强：外径上限随额定功率自适应（limits.statorOdLimit 优先）。
+ * @param {object} geo 几何参数（支持 stator_od/core_length/stator_bore 或 Stator_Lam_Dia/Stator_Lam_Length/Stator_Bore 双口径）
+ * @param {object} [limits] 约束上限（limits.statorOdLimit 可显式覆盖）
+ * @returns {{ issues: string[], warnings: string[] }}
+ */
+export function validateL2Geometry(geo = {}, limits = {}) {
+  const issues = []
+  const warnings = []
+  const pickGeo = (...keys) => {
+    for (const k of keys) {
+      const v = Number(geo?.[k])
+      if (Number.isFinite(v) && v > 0) return v
+    }
+    return null
+  }
+  const statorLamDia = pickGeo('stator_od', 'Stator_Lam_Dia', 'Stator_Lamination_Dia')
+  const statorBore = pickGeo('stator_bore', 'Stator_Bore')
+  const statorLamLength = pickGeo('core_length', 'Stator_Lam_Length', 'Motor_Length')
+
+  // 检查定子内径 < 外径
+  if (statorBore != null && statorLamDia != null && statorBore >= statorLamDia) {
+    issues.push('定子内径 ≥ 定子外径，几何冲突')
+  }
+  // 检查铁芯长度 > 0
+  if (statorLamLength == null || statorLamLength <= 0) {
+    issues.push('铁芯长度必须 > 0')
+  }
+  // 检查外径上限（B 增强：随额定功率自适应；limits.statorOdLimit 优先）
+  const odLimit = limits.statorOdLimit ?? adaptiveStatorOdLimit(extractRatedPowerW({ ...geo }))
+  if (statorLamDia != null && statorLamDia > odLimit) {
+    warnings.push(`定子外径 ${statorLamDia}mm 超过上限 ${odLimit}mm`)
+  }
+  return { issues, warnings }
+}
+
+/**
  * L2 失败分支统一"反馈动作"字段：任何失败都告诉用户"找谁 + 带什么信息"。
  * 背景：分发机器常处于失联状态（后端不可达），邮件是唯一回传通道；
  * 之前仅"未激活/配额用尽"两条路径带邮箱，L2 运行期失败全路径零覆盖。
@@ -408,28 +459,8 @@ export async function registerL2Validate(ctx, config = {}) {
       if (quotaErr) return { status: 'error', level: 'l2', error: quotaErr.error, quota: quotaErr.quota }
 
       const { geo, limits = {} } = params
-      const issues = []
-      const warnings = []
-
-      // 几何自洽性检查
-      const { Stator_Lam_Dia, Stator_Bore, Stator_Lam_Length } = geo
-
-      // 检查定子内径 < 外径
-      if (Stator_Bore >= Stator_Lam_Dia) {
-        issues.push('定子内径 ≥ 定子外径，几何冲突')
-      }
-
-      // 检查铁芯长度 > 0
-      if (!Stator_Lam_Length || Stator_Lam_Length <= 0) {
-        issues.push('铁芯长度必须 > 0')
-      }
-
-      // 检查外径上限（默认 500mm）
-      const odLimit = limits.statorOdLimit || 500
-      if (Stator_Lam_Dia > odLimit) {
-        warnings.push(`定子外径 ${Stator_Lam_Dia}mm 超过上限 ${odLimit}mm`)
-      }
-
+      // A/B 增强：纯函数校验（双口径字段归一化 + OD 上限自适应），见 validateL2Geometry
+      const { issues, warnings } = validateL2Geometry(geo, limits)
       return {
         status: issues.length === 0 ? 'valid' : 'invalid',
         tool: 'motor_l2_validate',

@@ -1,3 +1,30 @@
+## [1.0.0-rc.17] - 2026-10-16
+
+### Fixed
+- **F 跨对话重新注册/激活（根因）**：`lib/license.mjs` 的 `getActivationFilePath` /
+  `getRevocationFilePath` 原先只用 `DSH_HOME || ~/.dsh`，漏掉 DSH Desktop 真实数据目录
+  `%APPDATA%/dsh-desktop/harness`（`tests/_diag_remote_quota_standalone.mjs` 已证实）。
+  现在改为三重候选解析 `DSH_HOME → APPDATA/dsh-desktop/harness → ~/.dsh`：优先读已存在文件、
+  新写落 harness；`lib/quota.mjs` 经 `dirname` 自动对齐（一改双效）。根治「换对话需重激活」。
+- **A L2 几何校验「铁芯长度必须 > 0」误报（400kW 必现）**：`tools/l2/motorcad-verify.mjs`
+  抽出可单测纯函数 `validateL2Geometry`，几何校验兼容双口径（`stator_od`/`core_length` 等
+  L0 输出字段 + `Stator_Lam_Dia` 等 Motor-CAD 原名），消除 L0→L2 字段名不一致导致的恒失败。
+- **B 大机座外径误警**：同文件新增 `adaptiveStatorOdLimit`（400kW→800 / 450kW→875 /
+  未知→1000mm），外径上限随额定功率自适应，不再硬编码 500mm 误杀大机座。
+
+### Added
+- **D L1/L2 环境一键自助配置**：新增 `tools/env-bootstrap.mjs`（工具名 `motor_env_bootstrap`）
+  并在 `index.mjs` 注册；`lib/env-probe.mjs` 新增 `bootstrapEnv`（一键建 venv + pip
+  pyaedt/pywin32 + 探测缓存 AEDT/Motor-CAD 路径）。L1/L2 从「装齐才能用」→「点一下基本能用」。
+  诚实边界：`bootstrapEnv` 不安装基础 Python / AEDT / Motor-CAD 本体（需管理员+大体积）。
+
+### Changed
+- **E L0 候选极数硬约束**：`tools/l0/param-matrix.mjs` 在 `spec.poles` 显式给定时
+  `poleList=[poles]`，剔除异极数候选污染（如 400kW 误混入 V16 失败组）。
+- **C motor_type 跨层一致**：L0 默认口径回退 `config.defaultMotorType`，新增
+  `inferMotorTypeFromSpec`（含 magnet / slip=0 自动判 PMSM），与 L1 默认 `pmsm` 对齐，
+  消除「生成按异步、推理按 OD 误判」的口径分裂。
+
 ## [1.0.0-rc.16] - 2026-10-15
 
 ### Fixed

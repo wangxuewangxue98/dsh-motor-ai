@@ -100,6 +100,26 @@ export function poleCandidates(poles) {
   return list.filter((p) => p >= 1)
 }
 
+/**
+ * 从 spec 自动推断 motor_type（C 增强）：spec 含永磁特征字段则判 PMSM，
+ * 否则返回 undefined（交回缺省口径）。仅「有证据才推断」，绝不盲目改写
+ * 已显式传入的 motor_type，降低 PMSM 漏传率（如 300/400kW 船舶推进机
+ * 规格未显式传 motor_type 却按异步几何生成）。
+ * @param {object} spec
+ * @returns {'pmsm'|undefined}
+ */
+export function inferMotorTypeFromSpec(spec = {}) {
+  const s = spec || {}
+  const pmMarkers = ['magnet', 'permanent_magnet', 'pm_type', 'rotor_magnet', 'br_magnet']
+  for (const k of Object.keys(s)) {
+    const lk = String(k).toLowerCase()
+    if (pmMarkers.some((m) => lk.includes(m))) return 'pmsm'
+  }
+  // 显式声明无滑差（slip=0）也倾向永磁（异步机 slip>0）
+  if ('slip' in s && Number(s.slip) === 0) return 'pmsm'
+  return undefined
+}
+
 /** 等距取点（对齐 physics_kernel.py:_linspace 的用法） */
 function linspace(lo, hi, n) {
   const count = Math.max(1, n)
@@ -204,7 +224,15 @@ export function buildParamMatrix(rawSpec, config = {}) {
   // ---- PMSM 口径开关（P0，0.1.4）----
   // 缺省 → legacy 口径 idRatio(pole)=0.55+0.03(p−2)，与 0.1.3 / 程序 focused_scan 逐字节一致（零回归）；
   // 显式传 PMSM/BLDC/IPM（含中文别名）→ is_pm 生产口径 0.72+0.010(p−2) 钳[0.70,0.80]，更贴合 PMSM 真实几何。
-  const motorType = spec.motor_type ?? spec.motorType
+  // C 增强（跨层一致）：缺省口径先回退 config.defaultMotorType，再尝试从 spec 永磁特征推断；
+  // 仍缺则交回 legacy induction 默认（与生成路径一致，保持 10 万案例零回归）。
+  // 这样部署侧设置 defaultMotorType:'pmsm' 即可让 L0 与 L1/L2 默认口径对齐，消除
+  // 「生成按异步、求解按永磁」的物理不自洽。
+  const motorType =
+    spec.motor_type ??
+    spec.motorType ??
+    config?.defaultMotorType ??
+    inferMotorTypeFromSpec(spec)
   const usePm = isPmsmType(motorType)
   // 0.2.6 P0：类型规范化（别名归一 + 缺省显式判 induction 并标记），
   // 行对象无条件携带 motor_type，消除「生成按异步、推理按 OD 误判 pmsm」的口径分裂。
@@ -218,7 +246,9 @@ export function buildParamMatrix(rawSpec, config = {}) {
   const scanRange = 0.15
 
   // ---- 扫描网格规模：保证够 count 又不至于暴量 ----
-  const poleList = poleCandidates(poles)
+  // E 增强：spec.poles 显式给定时作为硬约束，不再 ±2 扩出异极数候选
+  // （400kW 报告 26 条 V16 失败即源自 6 极规格混入 4 极变体污染 TopN）
+  const poleList = polesExplicit ? [poles] : poleCandidates(poles)
   const perPole = Math.max(1, Math.ceil(count / poleList.length))
   const axis = Math.max(2, Math.ceil(Math.sqrt(perPole)))
 

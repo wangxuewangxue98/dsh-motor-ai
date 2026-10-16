@@ -21,6 +21,7 @@ import {
 } from '@wangxue98/dsh-motor-ai-core'
 import { registerL0Tools, L0_TOOL_NAMES } from './tools/l0/index.mjs'
 import { registerEnvCheck, ENV_CHECK_TOOL_NAME } from './tools/env-check.mjs'
+import { registerEnvBootstrap, ENV_BOOTSTRAP_TOOL_NAME } from './tools/env-bootstrap.mjs'
 import { registerReportIssue, REPORT_ISSUE_TOOL_NAME } from './tools/report-issue.mjs'
 
 // L1/L2 占位工具注册器（后续实现）
@@ -52,6 +53,8 @@ export const ALL_TOOL_NAMES = [
   'motor_motorcad_verify',
   // 反馈（免费、无门控——问题回流通道）
   'motor_report_issue',
+  // 环境自助配置（免费、不占配额——一键补齐 pyaedt/pywin32）
+  ENV_BOOTSTRAP_TOOL_NAME,
 ]
 
 // ============================================================
@@ -98,6 +101,10 @@ export async function registerAll(ctx, config = {}) {
   // 环境体检工具始终注册（免费、不占配额——自检/自救通道，见 tools/env-check.mjs 设计决策）
   await registerEnvCheck(ctx, config)
   registered.push(ENV_CHECK_TOOL_NAME)
+
+  // 环境自助配置工具始终注册（免费、不占配额——一键补齐 pyaedt/pywin32，见 tools/env-bootstrap.mjs）
+  await registerEnvBootstrap(ctx, config)
+  registered.push(ENV_BOOTSTRAP_TOOL_NAME)
 
   // 问题反馈工具始终注册（免费、不占配额、无授权要求——分发失联时唯一问题回流通道，
   // 见 tools/report-issue.mjs 设计决策；任何门控都会把反馈掐死在起点）
