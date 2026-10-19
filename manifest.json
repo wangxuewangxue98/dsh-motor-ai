@@ -2,7 +2,7 @@
   "id": "dsh-motor-ai",
   "name": "dsh-motor-ai",
   "displayName": "电机电磁设计 AI 插件 · 完整版",
-  "version": "1.0.0-rc.19",
+  "version": "1.0.0-rc.20",
   "manifestVersion": 2,
   "description": "电机电磁设计 AI 插件：需求解析 → 参数识别 → 候选矩阵 → L0 毫秒级广筛 → L1 RMxprt 精算 → L2 Motor-CAD 校核的端到端设计链",
   "author": {
@@ -29,13 +29,13 @@
     {
       "name": "motor-design",
       "path": "skills/motor-design/SKILL.md",
-      "version": "1.0.0-rc.19",
+      "version": "1.0.0-rc.20",
       "description": "电机设计辅助技能：L0 公式估算、L1 RMxprt 求解、L2 Motor-CAD 验证三档能力"
     },
     {
       "name": "motor-l0-estimate",
       "path": "skills/motor-l0-estimate/SKILL.md",
-      "version": "1.0.0-rc.19",
+      "version": "1.0.0-rc.20",
       "description": "电机设计 L0 快速预筛专家技能（毫秒级参数矩阵估算）"
     }
   ],

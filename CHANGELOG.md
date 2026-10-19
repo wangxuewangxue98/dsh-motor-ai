@@ -1,3 +1,27 @@
+## [1.0.0-rc.20] - 2026-10-20
+
+### Added
+- **P1-B 已解决问题回流（完整版）**：新增贡献型工具 `submit_resolved_case`（**不占免费额度**）。
+  用户在插件里把问题解决后，可将「问题分类 / 症状 / 根因 / 改进措施 / 解决过程」回传接收端
+  `/api/dsh/issue-resolved`，喂在线知识库。新增 `lib/issue-resolved.mjs`（字段白名单 +
+  身份类字段硬排除 + fire-and-forget 不阻塞主流程）与 `tools/l0/issue-resolved-tool.mjs`；
+  `index.mjs` 注册并新增配置 `issueResolvedEnabled`（**默认 false**，显式开启才外发）、
+  `issueResolvedEndpoint`（空 = 由 `commerceBackendUrl` 自动派生）。
+- **P1-C 在线知识库入口**：新增配置 `knowledgeBaseUrl`；配置后，免费额度用尽文案与
+  `submit_resolved_case` 提示自动带「先查知识库」链接。`cordis.patch.yml` 已填入公开导航页
+  `https://www.workbuddy.link/p/xWcD0qQyCUoGVl98S2LHei`（免登录可访问）。
+
+### Fixed
+- **额度账 plugin_id 错配**：`quotaPluginId` 默认由 `dsh-motor-ai-l0` 改为 `dsh-motor-ai-full`。
+  此前完整版与免费版共用 l0 一本账，制作者侧无法区分用量来源；现分桶记账。
+- **经验回传端点恒空（静默不回传）**：`lib/experience-upload.mjs` 新增
+  `resolveExperienceEndpoint()`，未显式配置 `experienceEndpoint` 时由 `commerceBackendUrl`
+  派生 `/api/dsh/experience`。
+
+### Tests
+- `scripts/verify.mjs` 门禁全过（14 工具 output 声明 / apply 契约 / 双通道激活闭环 / 额度闸门）。
+- 新增 `tests/p1bc-issue-resolved.test.mjs` 与 `e2e_full_issue_resolved.mjs`（完整版端到端 8/8）。
+
 ## [1.0.0-rc.19] - 2026-10-17
 
 ### Changed
