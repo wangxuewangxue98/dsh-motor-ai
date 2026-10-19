@@ -1,3 +1,24 @@
+## [1.0.0-rc.21] - 2026-10-20
+
+### Fixed
+- **严重（rc.18 → rc.20 直升必现升级失败）**：`cordis.patch.yml` 中 `telemetryEndpoint`
+  重复键致客户端判补丁无效、升级失败并自动回滚（报错「patch file is not a valid entry list」）。
+  - 根因：rc.20（commit `052b8cb`）新增 receiver URL 键时未删除原空值键，同一 mapping 出现
+    两个 `telemetryEndpoint`；YAML 规范禁止重复键，DSH 客户端插件管理器
+    （dsh-plugin-manager）以 `yaml@2` 默认 `uniqueKeys` 严格模式解析补丁，抛
+    "Map keys must be unique"，即上报补丁非法。
+  - 修复：删除空值键，仅保留已接通官方 receiver 的 URL 值——与 rc.20 宽松解析下的实际
+    生效值一致，运行行为零变化；l0 版补丁经同款解析器复检无重复键，未受影响。
+
+### Added
+- **防复发门禁**：`scripts/verify.mjs` 新增「YAML 严格解析（重复键防线）」一节，以客户端
+  同款 `yaml@2` 解析器复检全部仓库 YAML：重复键硬失败，其余语法问题仅告警不拦截。
+  `yaml` 加入 devDependencies。
+
+### Tests
+- `scripts/verify.mjs` 门禁全过（含新增重复键防线）。
+- `yaml@2.9.1`（客户端 `yaml@^2.9.0` 同大版本）严格解析 `cordis.patch.yml` 通过。
+
 ## [1.0.0-rc.20] - 2026-10-20
 
 ### Added

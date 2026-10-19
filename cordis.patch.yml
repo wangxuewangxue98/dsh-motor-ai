@@ -37,9 +37,11 @@
         highSpeedRpm: 8000                 # 超此转速气隙上限放宽到 4mm
         # ---- 脱敏聚合遥测（完整版默认开，2026-10-14）----
         # 只回传「按工具聚合的次数/成败/耗时/规模」，不含设计参数/结果/提示词/路径/密钥。
-        # endpoint 空 = 回退 {后端}/api/dsh/dsh-plugins/dsh-motor-ai/usage-report。
+        # ⚠️ telemetryEndpoint 全文件只允许出现一次（YAML 禁重复键；DSH 客户端
+        #    插件管理器用 yaml@2 严格模式解析补丁，遇重复键抛 "Map keys must be
+        #    unique" → 判「patch file is not a valid entry list」→ 升级失败自动回滚）。
+        #    端点取值见下方「聚合遥测端点」节；置空 = 回退 {后端}/api/dsh/dsh-plugins/dsh-motor-ai/usage-report。
         telemetryEnabled: true             # 总开关（boolean）；完整版默认开，置 false 显式退出
-        telemetryEndpoint: ''              # POST 目标；空 = 回退后端 usage-report 通道
         telemetryBatchSize: 50
         telemetryMinIntervalMs: 60000      # 上报尝试最小间隔（0=不节流；兼容旧键 telemetryIntervalSec）
         sessionTelemetry: 'auto'           # auto = 顺带挂 DSH sessionTelemetry

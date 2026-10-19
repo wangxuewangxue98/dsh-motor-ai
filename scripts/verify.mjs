@@ -851,6 +851,57 @@ try {
 }
 
 // ============================================================
+// 4z. 仓库 YAML 严格解析（重复键防线 — rc.20 升级事故复检）
+// ============================================================
+// 事故背景：rc.20 的 cordis.patch.yml 中 telemetryEndpoint 出现两次（空值 + URL），
+// YAML 规范禁止重复键；DSH 客户端插件管理器（dsh-plugin-manager）以 yaml@2 默认
+// uniqueKeys 严格模式解析补丁，抛 "Map keys must be unique" → 判补丁非法
+// （"patch file is not a valid entry list"）→ 升级失败并自动回滚。
+// 本门禁以同款解析器复检全部仓库 YAML：重复键硬失败，其余语法问题仅告警不拦截。
+console.log('\n=== YAML 严格解析（重复键防线）===')
+{
+  let yamlParse = null
+  try {
+    yamlParse = (await import('yaml')).parse
+  } catch {
+    yamlParse = null
+  }
+  if (!yamlParse) {
+    console.log('❌ 严格 YAML 解析器缺失：node_modules/yaml 不存在（devDependency: yaml；本仓 npm install 尚被 @deepseek-ai/cordis@^0.1.17 无匹配版本挡死，需先修该范围）')
+    failures++
+  } else {
+    const ymlFiles = []
+    const walk = (dir) => {
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        if (ent.name === 'node_modules' || ent.name === 'output' || ent.name.startsWith('.')) continue
+        const p = join(dir, ent.name)
+        if (ent.isDirectory()) walk(p)
+        else if (/\.(yml|yaml)$/i.test(ent.name)) ymlFiles.push(p)
+      }
+    }
+    walk(ROOT)
+    const dupBad = [], otherBad = []
+    for (const f of ymlFiles) {
+      try {
+        yamlParse(readFileSync(f, 'utf-8'))
+      } catch (err) {
+        const first = String(err.message).split('\n')[0]
+        if (/unique/i.test(first)) dupBad.push(`${relative(ROOT, f)}: ${first}`)
+        else otherBad.push(`${relative(ROOT, f)}: ${first}`)
+      }
+    }
+    for (const l of otherBad) console.log(`  · 告警（非重复键，不拦截）：${l}`)
+    if (dupBad.length === 0) {
+      console.log(`✅ ${ymlFiles.length} 个仓库 YAML 严格解析通过（无重复键；客户端 yaml@2 等价校验）`)
+    } else {
+      console.log(`❌ YAML 重复键 ${dupBad.length} 处（客户端将判补丁无效，升级必失败并回滚）：`)
+      dupBad.forEach((l) => console.log('   ' + l))
+      failures++
+    }
+  }
+}
+
+// ============================================================
 // 5. 汇总
 // ============================================================
 console.log('\n=== 检查结果 ===')
