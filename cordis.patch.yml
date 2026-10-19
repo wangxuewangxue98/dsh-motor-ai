@@ -70,4 +70,4 @@
         issueResolvedEnabled: false       # 总开关（boolean）；默认关闭
         issueResolvedEndpoint: ''         # 目标 URL；为空则回退 commerceBackendUrl + /api/dsh/issue-resolved
         # ---- 在线知识库入口（P1-C；为空 = 文案不带链接）----
-        knowledgeBaseUrl: ''              # 配置后：额度用尽文案 / submit_resolved_case 提示带「先查知识库」入口
+        knowledgeBaseUrl: 'https://www.workbuddy.link/p/xWcD0qQyCUoGVl98S2LHei'  # 在线知识库公开入口（导航页）；空 = 文案不带链接
