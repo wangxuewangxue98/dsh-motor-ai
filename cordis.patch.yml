@@ -48,7 +48,26 @@
         # 官方接收端（Deno Deploy 2，境内直连可达）：https://dsh-motor-ai-receiver.wangxuewangxue98.deno.net
         # 置空串 = 不发旁路计数（回退 env.DSH_BACKEND_URL → http://127.0.0.1:5000）。
         commerceBackendUrl: 'https://dsh-motor-ai-receiver.wangxuewangxue98.deno.net'
+        # ---- 来源区分（v1.0.1：完整版与 l0 在后端账本上分离）----
+        # 默认与 l0 同为 'dsh-motor-ai-l0'（两侧共用免费额度账的设计）；
+        # 显式设为 'dsh-motor-ai-full' 后，receiver KV 计数键 ['fce'/'pd', plugin_id, ...]
+        # 按本值分桶 —— 后端统计可区分来源，本地额度文件仍按 device 维度共用，不受影响。
+        # ⚠️ 仅对新安装/升级到含本补丁版本的用户生效（cordis patch 在安装时注入）。
+        quotaPluginId: 'dsh-motor-ai-full'
+        # ---- 聚合遥测端点（v1.0.1：接通官方接收端 telemetry 通道）----
+        # 完整版 telemetry 默认开（telemetryEnabled=true），缺省打 usage-report 路径
+        # （Flask 后端契约，deno receiver 无此路径会 404 静默）。
+        # 显式指向 receiver 的 /api/dsh/telemetry 后，版本分布/工具使用统计当天可见。
+        telemetryEndpoint: 'https://dsh-motor-ai-receiver.wangxuewangxue98.deno.net/api/dsh/telemetry'
         # ---- 脱敏设计经验回传（默认关闭；用于 L0 代理重训）----
         designExperienceUpload: false
-        experienceEndpoint: ''             # 空 = 回退复用 telemetryEndpoint
+        experienceEndpoint: ''             # 空 = 同源派生 telemetryEndpoint 的 /api/dsh/experience
         experienceBatchSize: 200
+        # ---- 已解决问题回流（P1-B；贡献型、不占配额，默认关闭）----
+        # 与 telemetry/designExperienceUpload 相互独立：本项回传「用户主动提交的
+        # 已解决问题知识」（问题分类/症状/根因/改进措施/解决过程），喂在线知识库做知识积累。
+        # 身份类字段（账号/路径/提示词/密钥）经白名单硬排除。开启后通过 submit_resolved_case 工具触发。
+        issueResolvedEnabled: false       # 总开关（boolean）；默认关闭
+        issueResolvedEndpoint: ''         # 目标 URL；为空则回退 commerceBackendUrl + /api/dsh/issue-resolved
+        # ---- 在线知识库入口（P1-C；为空 = 文案不带链接）----
+        knowledgeBaseUrl: ''              # 配置后：额度用尽文案 / submit_resolved_case 提示带「先查知识库」入口

@@ -14,10 +14,14 @@ import {
   registerDesignValidate, runDesignValidate, TOOL_PARAMS as VALIDATE_PARAMS,
 } from './design-validate.mjs'
 import { registerL0Pipeline, runL0Pipeline, TOOL_PARAMS as PIPELINE_PARAMS } from './pipeline.mjs'
+import {
+  registerSubmitResolvedCase, runSubmitResolvedCase, TOOL_PARAMS as ISSUE_RESOLVED_PARAMS,
+} from './issue-resolved-tool.mjs'
 
 /** 当前层全部工具名（供 index.mjs 日志与自检查询） */
 export const L0_TOOL_NAMES = [
   'motor_param_matrix', 'motor_l0_estimate', 'motor_design_validate', 'motor_l0_pipeline',
+  'submit_resolved_case',
 ]
 
 /**
@@ -31,6 +35,7 @@ export async function registerL0Tools(ctx, config = {}) {
   await registerL0Estimate(ctx, config)
   await registerDesignValidate(ctx, config)
   await registerL0Pipeline(ctx, config)
+  await registerSubmitResolvedCase(ctx, config)
   return L0_TOOL_NAMES
 }
 
@@ -39,13 +44,15 @@ export {
   runL0Estimate,
   runDesignValidate,
   runL0Pipeline,
+  runSubmitResolvedCase,
   MATRIX_PARAMS,
   ESTIMATE_PARAMS,
   VALIDATE_PARAMS,
   PIPELINE_PARAMS,
+  ISSUE_RESOLVED_PARAMS,
 }
 
 export default {
   registerL0Tools, L0_TOOL_NAMES,
-  buildParamMatrix, runL0Estimate, runDesignValidate, runL0Pipeline,
+  buildParamMatrix, runL0Estimate, runDesignValidate, runL0Pipeline, runSubmitResolvedCase,
 }

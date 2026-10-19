@@ -44,6 +44,8 @@ export const inject = ['tools']
 /** 所有已注册工具名（供日志与自检查询） */
 export const ALL_TOOL_NAMES = [
   ...L0_TOOL_NAMES,
+  // 知识积累闭环（贡献型、不占配额——问题解决后回流知识库，P1-B）
+  'submit_resolved_case',
   // L1 占位（待实现后替换为真工具）
   'motor_l1_estimate',
   'motor_l1_pipeline',
@@ -314,8 +316,8 @@ const CONFIG_SCHEMA = {
     // ---- 配额 / 经验回传 / usage 落盘（与 lib 内默认一致）----
     quotaPluginId: {
       type: 'string',
-      default: 'dsh-motor-ai-l0',
-      description: '后端额度账 plugin_id（历史约定：完整版与 l0 共用一本账）',
+      default: 'dsh-motor-ai-full',
+      description: '后端额度账 plugin_id（完整版独立记账：与免费版 l0 分桶，供制作者侧区分来源）',
     },
     freeQuotaEnabled: {
       type: 'boolean',
@@ -341,6 +343,26 @@ const CONFIG_SCHEMA = {
       type: 'number',
       default: 200,
       description: 'design_exp 单批上限条数',
+    },
+    // ---- 已解决问题回流（P1-B；贡献型、不占配额，默认关闭）----
+    // 用户在插件里解决问题后，通过 submit_resolved_case 工具把「问题分类 / 症状 /
+    // 根因 / 改进措施 / 解决过程」发回接收端（/api/dsh/issue-resolved），喂在线知识库。
+    // 身份类字段（账号 / 路径 / 提示词 / 密钥）经白名单硬排除；fire-and-forget 不影响主流程。
+    issueResolvedEnabled: {
+      type: 'boolean',
+      default: false,
+      description: '已解决问题回流总开关（默认关；显式 true 才真正外发）',
+    },
+    issueResolvedEndpoint: {
+      type: 'string',
+      default: '',
+      description: '已解决问题回传目标 URL；空 = 自动回退 commerceBackendUrl + /api/dsh/issue-resolved；二者都空 = 不启用',
+    },
+    // ---- 在线知识库入口（P1-C；为空 = 所有文案不带链接）----
+    knowledgeBaseUrl: {
+      type: 'string',
+      default: '',
+      description: '在线知识库地址；配置后，额度用尽文案与 submit_resolved_case 提示会带「先查知识库」入口',
     },
     // ---- 工程 / 回归（与 lib/regression-gate.mjs、tools/l0/pipeline.mjs 内默认一致）----
     motorDesignRoot: {
