@@ -3,7 +3,7 @@ name: motor-design
 description: 电机设计辅助技能，提供 L0 公式估算、L1 RMxprt 求解、L2 Motor-CAD 验证三档能力
 metadata:
   author: Motor-AI
-  version: 1.0.0-rc.21
+  version: 1.0.0-rc.22
   level: l1
   tier: premium
 ---

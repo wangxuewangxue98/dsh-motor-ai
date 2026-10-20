@@ -1,6 +1,6 @@
 {
   "name": "dsh-motor-ai",
-  "version": "1.0.0-rc.21",
+  "version": "1.0.0-rc.22",
   "description": "电机设计 L1/L2 完整版（RMxprt + Motor-CAD），依赖共享核心 @wangxue98/dsh-motor-ai-core",
   "type": "module",
   "main": "./index.mjs",
@@ -27,12 +27,16 @@
   "peerDependencies": {
     "@deepseek-ai/dsh": ">=0.1.2 <0.2.0"
   },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "@wangxue98/dsh-motor-ai-core": "^1.4.0"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "^0.1.17",
-    "@deepseek-ai/dsh-tools": "^0.1.7",
+    "@deepseek-ai/dsh-tools": "file:./dev-stubs/dsh-tools",
     "jest": "^29.7.0",
     "yaml": "^2.9.1"
   },

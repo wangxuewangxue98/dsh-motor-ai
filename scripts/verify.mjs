@@ -867,7 +867,7 @@ console.log('\n=== YAML 严格解析（重复键防线）===')
     yamlParse = null
   }
   if (!yamlParse) {
-    console.log('❌ 严格 YAML 解析器缺失：node_modules/yaml 不存在（devDependency: yaml；本仓 npm install 尚被 @deepseek-ai/cordis@^0.1.17 无匹配版本挡死，需先修该范围）')
+    console.log('❌ 严格 YAML 解析器缺失：node_modules/yaml 不存在（devDependency: yaml@^2.9.1；dsh-tools 用 dev-stubs/ file: 桩，@deepseek-ai/dsh peer 已标 optional，npm install 应可全树解析）')
     failures++
   } else {
     const ymlFiles = []
@@ -898,6 +898,62 @@ console.log('\n=== YAML 严格解析（重复键防线）===')
       dupBad.forEach((l) => console.log('   ' + l))
       failures++
     }
+  }
+}
+
+// ============================================================
+// 4z-b. defineTool output schema 防线（rc.22 激活事故复检）
+// ============================================================
+// 事故背景：rc.20 新增 submit_resolved_case 的 output.schema 为裸 { type: 'object' }，
+// 而真实 dsh-tools（DSH 0.12.0 内置版同款）的 value schema 编译器对 object 分支
+// 硬要求显式 additionalProperties（"additionalProperties must be explicitly true
+// or false"）——register 时 defineTool 即抛 authorError → registerAll 抛 →
+// cordis fiber FAILED → 「更新后的组合无法启动」。安装阶段只验 patch entry list
+// 结构，不 import 插件模块，故表现为「安装正确、重启报故障」。
+// 本门禁静态复检：凡 schema: 指向的 object 字面量缺 additionalProperties 即失败。
+// （旧工具经 ctx.tools.register 直接注册、不过编译器，其 parameters 不在本规则内。）
+console.log('\n=== defineTool output schema 防线 ===')
+{
+  const mjsFiles = []
+  const walkTools = (dir) => {
+    for (const ent of readdirSync(dir, { withFileTypes: true })) {
+      if (ent.name === 'node_modules' || ent.name === 'output' || ent.name.startsWith('.')) continue
+      const p = join(dir, ent.name)
+      if (ent.isDirectory()) walkTools(p)
+      else if (/\.mjs$/.test(ent.name)) mjsFiles.push(p)
+    }
+  }
+  walkTools(join(ROOT, 'tools'))
+  const schemaBad = []
+  for (const f of mjsFiles) {
+    const text = readFileSync(f, 'utf-8')
+    const re = /type:\s*'object'/g
+    let m
+    while ((m = re.exec(text)) !== null) {
+      const start = text.lastIndexOf('{', m.index)
+      if (start < 0) continue
+      let depth = 0, end = -1
+      for (let i = start; i < text.length; i++) {
+        if (text[i] === '{') depth++
+        else if (text[i] === '}') { depth--; if (depth === 0) { end = i; break } }
+      }
+      if (end < 0) continue
+      const frag = text.slice(start, end + 1)
+      if (frag.includes('additionalProperties')) continue
+      // 仅拦截 schema: 指向的 object（output.schema 走 value schema 编译器）；
+      // parameters 形 object 由 defineTool 的 property-map 路径处理，不适用本规则。
+      const before = text.slice(Math.max(0, start - 80), start)
+      if (!/schema:\s*$/.test(before)) continue
+      const line = text.slice(0, m.index).split('\n').length
+      schemaBad.push(`${relative(ROOT, f)}:${line} ${frag.slice(0, 80).replace(/\n/g, ' ')}`)
+    }
+  }
+  if (schemaBad.length === 0) {
+    console.log(`✅ ${mjsFiles.length} 个工具文件中 schema object 均显式 additionalProperties`)
+  } else {
+    console.log(`❌ ${schemaBad.length} 处 schema object 缺 additionalProperties（真实 defineTool 注册即抛，插件激活失败）：`)
+    schemaBad.forEach((l) => console.log('   ' + l))
+    failures++
   }
 }
 

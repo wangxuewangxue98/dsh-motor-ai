@@ -1,3 +1,21 @@
+## [1.0.0-rc.22] - 2026-10-20
+
+### Fixed
+- **修复 submit_resolved_case 致插件重启激活失败（严重）**：rc.20 起该工具
+  `output.schema` 为裸 `{ type: 'object' }`，真实 dsh-tools 的 value schema 编译器
+  对 object 分支硬要求显式 `additionalProperties`（"additionalProperties must be
+  explicitly true or false"），`defineTool` 注册即抛 authorError → registerAll 抛 →
+  cordis fiber FAILED → 「更新后的组合无法启动」。安装阶段只验 patch entry list
+  结构、不 import 插件模块，故表现为「安装正确、重启报故障」。
+  修复：schema 改回 `{ type: 'string' }`、execute 返回 JSON 字符串、render 直出
+  （与全仓其余 13 工具一致，兼容各代 DSH 契约）。
+- `scripts/verify.mjs` 新增「defineTool output schema 防线」：静态复检全部工具文件，
+  `schema:` 指向的 object 缺 additionalProperties 即门禁失败（防回归）。
+
+### Verified
+- 客户端真实 dsh-tools（DSH 0.12.0 内置版）冒烟：修复前 THROW / 修复后 REGISTER OK
+  （单变量对照）；execute 返回 string；verify 全量门禁通过
+
 ## [1.0.0-rc.21] - 2026-10-20
 
 ### Fixed
