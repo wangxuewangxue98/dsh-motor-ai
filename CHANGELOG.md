@@ -1,3 +1,34 @@
+## [1.0.0-rc.23] - 2026-10-21
+
+### Added
+- **Part 二完整版：故障协助（在线经验智能支持）闭环**。用户在使用插件报故障时，提示上传
+  脱敏故障情况、获取在线经验智能支持；解决完问题后知识经验回流（需求②）。
+  - 新增客户端库 `lib/fault-report.mjs`：脱敏故障上报（POST `/api/dsh/fault-report`，
+    白名单 `FAULT_REPORT_FIELDS` + 身份类字段黑名单硬排除 + fire-and-forget 不阻塞主流程）
+    + 相似案例查询（GET `/api/dsh/issue-resolved/query`，接收端 CJK bigram 轻量相似度匹配，无 LLM）。
+  - 新增工具 `motor_fault_assist`（免费、不占配额、无激活要求）：上传脱敏故障情况 → 自动匹配
+    在线知识库相似已解决案例 → 给根因/改进措施建议；`query_only=true` 可只查不上报。
+    `output.schema = { type: 'string' }`（对齐 DSH defineTool 契约，规避 rc.22 类激活事故）。
+  - L0/L1/L2 报错路径统一注入 `fault_assist` 引导字段（兼容 L1/L2 的 `status` 形态与 L0 的
+    `error: true` 形态）：`tools/l0/design-validate.mjs`、`tools/l0/l0-estimate.mjs`、
+    `tools/l1/rmxprt-solve.mjs`（×3）、`tools/l2/motorcad-verify.mjs`（×2）。
+  - `index.mjs` 注册 `motor_fault_assist` 并新增配置 `faultAssistEnabled`（默认开）、
+    `faultReportEndpoint`、`issueQueryEndpoint`；`cordis.patch.yml` 注入三项（Part 二完整版）。
+  - 接收端 `main.ts` 新增 `POST /api/dsh/fault-report` 与 `GET /api/dsh/issue-resolved/query`
+    端点（Deno KV 落盘 `['flt', ...]`，CJK bigram + 子串命中评分，limit ≤ 20，无 LLM）；
+    `handleStats` 新增 `fault_report` 计数，`EXPORT_EVENT_PREFIXES` 新增 `flt` 段；
+    已部署 revision `5jyjw3kztnd6`，线上验证通过。
+- **Part 一默认值变更（随本版生效）**：`designExperienceUpload`（脱敏设计经验样本）与
+  `issueResolvedEnabled`（已解决问题知识回流）默认由 `false` 改为 **`true`**（与
+  `cordis.patch.yml` 一致，opt-out 置 `false`）。
+
+### Verified
+- `scripts/verify.mjs` 全量门禁通过（含 `motor_fault_assist` 工具注册冒烟：15 工具过 DSH
+  output 校验、execute 均返回 string）；YAML 无重复键；defineTool output schema 防线干净。
+- 接收端线上端点验证：POST `/api/dsh/fault-report` 返回 `{"ok":true,"inserted":1}`；
+  GET `/api/dsh/issue-resolved/query` 对 `V08` / `磁饱和` / `轭厚`（正确编码）均命中相关案例
+  （含 score）；stats 新增 `fault_report` 段；空 `q` 拒。
+
 ## [1.0.0-rc.22] - 2026-10-20
 
 ### Fixed

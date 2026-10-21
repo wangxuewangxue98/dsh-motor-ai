@@ -23,6 +23,7 @@ import { registerL0Tools, L0_TOOL_NAMES } from './tools/l0/index.mjs'
 import { registerEnvCheck, ENV_CHECK_TOOL_NAME } from './tools/env-check.mjs'
 import { registerEnvBootstrap, ENV_BOOTSTRAP_TOOL_NAME } from './tools/env-bootstrap.mjs'
 import { registerReportIssue, REPORT_ISSUE_TOOL_NAME } from './tools/report-issue.mjs'
+import { registerFaultAssist, FAULT_ASSIST_TOOL_NAME } from './tools/fault-assist.mjs'
 
 // L1/L2 占位工具注册器（后续实现）
 import { registerL1Placeholders } from './tools/l1/index.mjs'
@@ -46,6 +47,8 @@ export const ALL_TOOL_NAMES = [
   ...L0_TOOL_NAMES,
   // 知识积累闭环（贡献型、不占配额——问题解决后回流知识库，P1-B）
   'submit_resolved_case',
+  // 故障协助（在线经验智能支持：脱敏故障上报 + 相似案例匹配，Part 二完整版）
+  FAULT_ASSIST_TOOL_NAME,
   // L1 占位（待实现后替换为真工具）
   'motor_l1_estimate',
   'motor_l1_pipeline',
@@ -112,6 +115,10 @@ export async function registerAll(ctx, config = {}) {
   // 见 tools/report-issue.mjs 设计决策；任何门控都会把反馈掐死在起点）
   await registerReportIssue(ctx, config)
   registered.push(REPORT_ISSUE_TOOL_NAME)
+
+  // 故障协助工具始终注册（免费、不占配额、无授权要求——报错路径的在线经验支持触点）
+  await registerFaultAssist(ctx, config)
+  registered.push(FAULT_ASSIST_TOOL_NAME)
 
   // L1 始终注册（工具恒存在）；调用时按许可证门控——
   // 无码/过期/无效 → 返回 LICENSE_REQUIRED 引导，L0 不受影响（落实引流触点 2）
@@ -331,8 +338,8 @@ const CONFIG_SCHEMA = {
     },
     designExperienceUpload: {
       type: 'boolean',
-      default: false,
-      description: '脱敏设计经验回传（design_exp 通道）；显式 true 才启用',
+      default: true,
+      description: '脱敏设计经验回传（design_exp 通道）；2026-10-21 起默认开（与 cordis.patch.yml 一致，opt-out 置 false）',
     },
     experienceEndpoint: {
       type: 'string',
@@ -350,13 +357,31 @@ const CONFIG_SCHEMA = {
     // 身份类字段（账号 / 路径 / 提示词 / 密钥）经白名单硬排除；fire-and-forget 不影响主流程。
     issueResolvedEnabled: {
       type: 'boolean',
-      default: false,
-      description: '已解决问题回流总开关（默认关；显式 true 才真正外发）',
+      default: true,
+      description: '已解决问题回流总开关（2026-10-21 起默认开，知识经验回流；opt-out 置 false）',
     },
     issueResolvedEndpoint: {
       type: 'string',
       default: '',
       description: '已解决问题回传目标 URL；空 = 自动回退 commerceBackendUrl + /api/dsh/issue-resolved；二者都空 = 不启用',
+    },
+    // ---- 故障协助（在线经验智能支持，Part 二完整版）----
+    // 用户报故障时，提示上传脱敏故障情况 → 自动匹配在线知识库相似案例给经验建议；
+    // 解决后用 submit_resolved_case 回流。受 issueResolvedEndpoint 同源后端约束。
+    faultAssistEnabled: {
+      type: 'boolean',
+      default: true,
+      description: '故障协助总开关（默认开；显式 false 退出在线经验支持引导与故障上报，opt-out）',
+    },
+    faultReportEndpoint: {
+      type: 'string',
+      default: '',
+      description: '脱敏故障上报目标 URL；空 = 自动回退 commerceBackendUrl + /api/dsh/fault-report；二者都空 = 不启用',
+    },
+    issueQueryEndpoint: {
+      type: 'string',
+      default: '',
+      description: '相似案例查询目标 URL；空 = 自动回退 commerceBackendUrl + /api/dsh/issue-resolved/query；二者都空 = 仅提示不查询',
     },
     // ---- 在线知识库入口（P1-C；为空 = 所有文案不带链接）----
     knowledgeBaseUrl: {
@@ -437,6 +462,8 @@ export {
   registerL0Tools,
   registerL1Placeholders,
   registerL2Placeholders,
+  registerFaultAssist,
+  FAULT_ASSIST_TOOL_NAME,
   registerActivateCommand,
   ACTIVATE_TOOL_NAME,
   activateLicense,

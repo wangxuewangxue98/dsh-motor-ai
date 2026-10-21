@@ -26,6 +26,7 @@ import { enforceQuota } from '../../lib/quota.mjs'
 import { probeL1, buildEnvGuide } from '../../lib/env-probe.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
+import { withFaultAssistHint } from '../../lib/fault-report.mjs'
 
 /** L1 工具名列表 */
 export const L1_TOOL_NAMES = [
@@ -200,7 +201,9 @@ export async function registerL1Estimate(ctx, config = {}) {
   - powerFactor: 功率因数
   - current: 电流 (A)
   - fluxDensity: 磁密 (T)
-  - solveTime: 求解时间 (s)`,
+  - solveTime: 求解时间 (s)
+
+故障协助：若调用失败，返回体含 fault_assist 字段（建议调用 motor_fault_assist 上传脱敏故障情况，获取在线经验智能支持）。`,
     parameters: {
       type: 'object',
       properties: {
@@ -283,7 +286,7 @@ export async function registerL1Estimate(ctx, config = {}) {
         })
         scheduleTelemetry(config)
       }
-      return JSON.stringify(__res, null, 2)
+      return JSON.stringify(withFaultAssistHint(__res, { config }), null, 2)
     },
   })
 
@@ -306,7 +309,9 @@ export async function registerL1Pipeline(ctx, config = {}) {
 
 返回:
   - results: 求解结果列表（按效率排序）
-  - stats: 统计信息（成功数/失败数/平均时间）`,
+  - stats: 统计信息（成功数/失败数/平均时间）
+
+故障协助：若调用失败，返回体含 fault_assist 字段（建议调用 motor_fault_assist 上传脱敏故障情况，获取在线经验智能支持）。`,
     parameters: {
       type: 'object',
       properties: {
@@ -414,7 +419,7 @@ export async function registerL1Pipeline(ctx, config = {}) {
         })
         scheduleTelemetry(config)
       }
-      return JSON.stringify(__res, null, 2)
+      return JSON.stringify(withFaultAssistHint(__res, { config }), null, 2)
     },
   })
   
@@ -437,7 +442,9 @@ export async function registerRmxprtSolve(ctx, config = {}) {
 返回:
   - design: 原始设计
   - results: 求解结果（电磁性能、损耗、温升等）
-  - diagnostics: 诊断信息`,
+  - diagnostics: 诊断信息
+
+故障协助：若调用失败，返回体含 fault_assist 字段（建议调用 motor_fault_assist 上传脱敏故障情况，获取在线经验智能支持）。`,
     parameters: {
       type: 'object',
       properties: {
@@ -514,7 +521,7 @@ export async function registerRmxprtSolve(ctx, config = {}) {
         })
         scheduleTelemetry(config)
       }
-      return JSON.stringify(__res, null, 2)
+      return JSON.stringify(withFaultAssistHint(__res, { config }), null, 2)
     },
   })
   

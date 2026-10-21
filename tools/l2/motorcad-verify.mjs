@@ -23,6 +23,7 @@ import { enforceQuota } from '../../lib/quota.mjs'
 import { probeL2, buildEnvGuide } from '../../lib/env-probe.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
+import { withFaultAssistHint } from '../../lib/fault-report.mjs'
 
 /** bridge 脚本路径（随包分发：scripts/motorcad_bridge.py） */
 const _here = dirname(fileURLToPath(import.meta.url))
@@ -435,7 +436,9 @@ export async function registerL2Validate(ctx, config = {}) {
 返回:
   - valid: 是否有效
   - issues: 问题列表
-  - warnings: 警告列表`,
+  - warnings: 警告列表
+
+故障协助：若校验失败，返回体含 fault_assist 字段（建议调用 motor_fault_assist 上传脱敏故障情况，获取在线经验智能支持）。`,
     parameters: {
       type: 'object',
       properties: {
@@ -481,7 +484,7 @@ export async function registerL2Validate(ctx, config = {}) {
         })
         scheduleTelemetry(config)
       }
-      return JSON.stringify(__res, null, 2)
+      return JSON.stringify(withFaultAssistHint(__res, { config }), null, 2)
     },
   })
   
@@ -510,7 +513,9 @@ export async function registerMotorCADVerify(ctx, config = {}) {
   - electromagnetic: 电磁性能
   - thermal: 温升结果
   - geometry: 几何校验
-  - solveTime: 求解时间`,
+  - solveTime: 求解时间
+
+故障协助：若调用失败（含降级兜底），返回体含 fault_assist 字段（建议调用 motor_fault_assist 上传脱敏故障情况，获取在线经验智能支持）。`,
     parameters: {
       type: 'object',
       properties: {
@@ -668,7 +673,7 @@ export async function registerMotorCADVerify(ctx, config = {}) {
         })
         scheduleTelemetry(config)
       }
-      return JSON.stringify(__res, null, 2)
+      return JSON.stringify(withFaultAssistHint(__res, { config }), null, 2)
     },
   })
   

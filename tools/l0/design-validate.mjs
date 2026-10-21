@@ -24,6 +24,7 @@ import { DEFAULT_LINE_FREQ_HZ } from '@wangxue98/dsh-motor-ai-core'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
 import { assertFreeQuota, QuotaExceededError } from '../../lib/quota.mjs'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
+import { withFaultAssistHint } from '../../lib/fault-report.mjs'
 
 /** 工具入参声明 */
 export const TOOL_PARAMS = {
@@ -179,7 +180,10 @@ export async function registerDesignValidate(ctx, config = {}) {
           error: String(err?.message ?? err),
         })
         scheduleTelemetry(config)
-        return JSON.stringify({ error: true, message: String(err?.message ?? err) }, null, 2)
+        return JSON.stringify(
+          withFaultAssistHint({ error: true, message: String(err?.message ?? err) }, { config }),
+          null, 2,
+        )
       }
     },
   }))
