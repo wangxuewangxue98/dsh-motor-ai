@@ -285,6 +285,22 @@ export async function registerL1Estimate(ctx, config = {}) {
           error: __res.status === 'success' ? undefined : String(__res.error ?? 'unknown'),
         })
         scheduleTelemetry(config)
+        // 设计经验脱敏回传（完整版 L1 落盘点）：
+        //   把本次真实 RMxprt 求解的规格/几何/结论裁 design_exp 落本地 experience.jsonl，
+        //   再由 scheduleExperience 节流 flush。此前 L1 全链路无落盘点，
+        //   「外部真实设计域」样本一条都没进过真值库。
+        {
+          const { logDesignExperience, normalizeDesignRow, scheduleExperience } =
+            await import('../../lib/experience-upload.mjs')
+          if (__res?.status === 'success') {
+            logDesignExperience(config, normalizeDesignRow({
+              spec: { ...(params.spec || {}), motor_type: __res.metadata?.motorType },
+              geo: params.geo || {},
+              out: __res.result || {},
+            }))
+          }
+          scheduleExperience(config)
+        }
       }
       return JSON.stringify(withFaultAssistHint(__res, { config }), null, 2)
     },
@@ -418,6 +434,21 @@ export async function registerL1Pipeline(ctx, config = {}) {
           error: __res.status === 'success' ? undefined : String(__res.error ?? 'unknown'),
         })
         scheduleTelemetry(config)
+        // 设计经验脱敏回传（L1 批量流水线落盘点）：逐条成功候选裁 design_exp。
+        // cand.params 同时承载规格与几何字段，spec/geo 两路同传由白名单各自裁剪；
+        // 字段缺失时 logDesignExperience 判为空样本自动丢弃，不污染真值库。
+        {
+          const { logDesignExperience, normalizeDesignRow, scheduleExperience } =
+            await import('../../lib/experience-upload.mjs')
+          const rows = (__res?.results ?? [])
+            .filter((r) => r?.status === 'success' && r?.l1_result)
+            .map((r) => {
+              const p = r.params || r.cand?.params || {}
+              return normalizeDesignRow({ spec: p, geo: p, out: r.l1_result || {} })
+            })
+          if (rows.length) logDesignExperience(config, rows)
+          scheduleExperience(config)
+        }
       }
       return JSON.stringify(withFaultAssistHint(__res, { config }), null, 2)
     },
@@ -520,6 +551,19 @@ export async function registerRmxprtSolve(ctx, config = {}) {
           error: __res.status === 'success' ? undefined : String(__res.error ?? 'unknown'),
         })
         scheduleTelemetry(config)
+        // 设计经验脱敏回传（L1 精细求解落盘点）：
+        //   design 是扁平完整方案（含 motorType + 几何 + 电气），spec/geo 两路同传，
+        //   out 取真实求解 result；字段缺失由白名单裁剪 + 空样本自动丢弃兜底。
+        {
+          const { logDesignExperience, normalizeDesignRow, scheduleExperience } =
+            await import('../../lib/experience-upload.mjs')
+          if (__res?.status === 'success') {
+            logDesignExperience(config, normalizeDesignRow({
+              spec: __res.design || {}, geo: __res.design || {}, out: __res.result || {},
+            }))
+          }
+          scheduleExperience(config)
+        }
       }
       return JSON.stringify(withFaultAssistHint(__res, { config }), null, 2)
     },

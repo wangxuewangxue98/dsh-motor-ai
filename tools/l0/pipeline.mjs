@@ -285,6 +285,15 @@ export async function registerL0Pipeline(ctx, config = {}) {
           feasible: result?.summary?.feasible_count,
         })
         scheduleTelemetry(config)
+        // 设计经验脱敏回传：**只触发 flush，不重复落盘** ——
+        //   pipeline 内部复用 param-matrix + l0-estimate，两者已各自落盘，
+        //   在此再落会产生同源重复样本。这里补 scheduleExperience 是为了
+        //   保证任何工具调用都能把本地堆积的 design_exp 推上去（此前该调度
+        //   在全仓无任何调用点，样本只落盘不上报）。
+        {
+          const { scheduleExperience } = await import('../../lib/experience-upload.mjs')
+          scheduleExperience(config)
+        }
         return JSON.stringify(result, null, 2)
       } catch (err) {
         if (err instanceof QuotaExceededError) {

@@ -166,6 +166,14 @@ export async function registerDesignValidate(ctx, config = {}) {
           failed: result?.summary?.failed, warning: result?.summary?.warning,
         })
         scheduleTelemetry(config)
+        // 设计经验脱敏回传：**只触发 flush，不落盘** ——
+        //   design-validate 产出的是规则命中（issues/warnings）而非设计结论，
+        //   落盘会生成无 out 段的噪声样本。补 scheduleExperience 仅为保证
+        //   本地堆积样本有机会被推上去（此前该调度在全仓无调用点）。
+        {
+          const { scheduleExperience } = await import('../../lib/experience-upload.mjs')
+          scheduleExperience(config)
+        }
         return JSON.stringify(result, null, 2)
       } catch (err) {
         if (err instanceof QuotaExceededError) {

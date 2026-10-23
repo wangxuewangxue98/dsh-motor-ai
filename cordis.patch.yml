@@ -65,6 +65,7 @@
         designExperienceUpload: true
         experienceEndpoint: ''             # 空 = 同源派生 telemetryEndpoint 的 /api/dsh/experience
         experienceBatchSize: 200
+        experienceMinIntervalMs: 60000     # design_exp 上报节流窗口（ms）；0 = 不节流
         # ---- 已解决问题回流（P1-B；贡献型、不占配额，默认关闭）----
         # 与 telemetry/designExperienceUpload 相互独立：本项回传「用户主动提交的
         # 已解决问题知识」（问题分类/症状/根因/改进措施/解决过程），喂在线知识库做知识积累。
@@ -78,4 +79,9 @@
         faultReportEndpoint: ''           # 脱敏故障上报 URL；空 = 回退 commerceBackendUrl + /api/dsh/fault-report
         issueQueryEndpoint: ''            # 相似案例查询 URL；空 = 回退 commerceBackendUrl + /api/dsh/issue-resolved/query
         # ---- 在线知识库入口（P1-C；为空 = 文案不带链接）----
-        knowledgeBaseUrl: 'https://www.workbuddy.link/p/xWcD0qQyCUoGVl98S2LHei'  # 在线知识库公开入口（导航页）；空 = 文案不带链接
+        knowledgeBaseUrl: 'https://workbuddy.link/p/xWcD0qQyCUoGVl98S2LHei'  # 在线知识库公开入口（导航页）；空 = 文案不带链接（与 index.mjs 默认值保持一致，勿加 www）
+        # ---- 设计经验自动注入（design-assist，2026-10-23）----
+        # 设计前经 /api/dsh/kb/query 拉取 L1 杠杆 / L2 评价 / 策展经验，
+        # 以 design_knowledge_hints 非破坏性追加到结果，不改动原有返回结构。
+        designAssistEnabled: true          # 总开关（boolean）；默认开启（opt-out 置 false）
+        kbQueryEndpoint: ''                # 知识查询 URL；空 = 回退 commerceBackendUrl + /api/dsh/kb/query

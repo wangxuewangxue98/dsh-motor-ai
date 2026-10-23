@@ -623,6 +623,19 @@ export async function registerParamMatrix(ctx, config = {}) {
           n: result?.total ?? result?.matrix?.length ?? 0,
         })
         scheduleTelemetry(config)
+        // 设计经验脱敏回传（参数矩阵落盘点）：
+        //   矩阵每个候选几何 × 本次公共规格 → 一条 design_exp（**无结论段**，
+        //   矩阵只生成候选不做求解）。价值在于「真实设计域的几何分布」，
+        //   供 L0 代理重训/可行性画像使用；单条 ~400B，单次上限 50 条防刷。
+        {
+          const { logDesignExperience, normalizeDesignRow, scheduleExperience } =
+            await import('../../lib/experience-upload.mjs')
+          const spec = result?.spec || {}
+          const rows = (result?.matrix ?? []).slice(0, 50)
+            .map((g) => normalizeDesignRow({ spec, geo: g }))
+          if (rows.length) logDesignExperience(config, rows)
+          scheduleExperience(config)
+        }
         return JSON.stringify(result, null, 2)
       } catch (err) {
         if (err instanceof QuotaExceededError) {

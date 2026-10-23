@@ -672,6 +672,22 @@ export async function registerMotorCADVerify(ctx, config = {}) {
             ? undefined : String(__res.error ?? 'unknown'),
         })
         scheduleTelemetry(config)
+        // 设计经验脱敏回传（L2 Motor-CAD 真 FEA 落盘点）：
+        //   design 为完整方案（可含 .spec）；out 合并电磁段与热段结论。
+        //   ⚠️ 降级态（fallback，confidence='low' 字符串）不落盘——避免把非 FEA
+        //   的估算值当真实样本喂回真值库（N1「绝不带残缺/失真样本」教训）。
+        {
+          const { logDesignExperience, normalizeDesignRow, scheduleExperience } =
+            await import('../../lib/experience-upload.mjs')
+          if (__res?.status === 'success') {
+            logDesignExperience(config, normalizeDesignRow({
+              spec: __res.design?.spec || __res.design || {},
+              geo: __res.design || {},
+              out: { ...(__res.electromagnetic || {}), ...(__res.thermal || {}) },
+            }))
+          }
+          scheduleExperience(config)
+        }
       }
       return JSON.stringify(withFaultAssistHint(__res, { config }), null, 2)
     },

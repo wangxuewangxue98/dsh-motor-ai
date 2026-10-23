@@ -1,3 +1,48 @@
+## [1.0.0] - 2026-10-24
+
+首个正式版。核心变化：在线知识库从「只采集」升级为「采集—晋升—利用」完整闭环，
+并修复了脱敏设计经验通道（design_exp）长期静默失效的重大缺陷。
+
+### Added
+- **design-assist（设计经验自动注入）**：新增客户端库 `lib/design-assist.mjs`，设计前经
+  `GET /api/dsh/kb/query` 拉取 L1 杠杆 / L2 评价 / 人工策展经验，以 `design_knowledge_hints`
+  字段**非破坏性**追加到工具结果（不改动既有返回结构）。已在 `motor_l0_estimate` 接入；
+  新增配置 `designAssistEnabled`（默认开）与 `kbQueryEndpoint`（空 = 回退后端同源）。
+- **experience 通道统一接入层**：`lib/experience-upload.mjs` 新增三个导出 ——
+  `normalizeDesignRow()`（L1/L2 异构返回 → design_exp 行形状适配，不动已审计的 `buildDesignExp`）、
+  `logDesignExperience()`（统一落盘，空样本自动丢弃）、`scheduleExperience()`
+  （节流上报调度，对齐 `scheduleTelemetry` 语义）。配套配置 `experienceMinIntervalMs`（默认 60000ms）。
+- **完整版工具链 experience 落盘点**：`motor_l1_estimate` / `motor_l1_pipeline` /
+  `motor_rmxprt_solve` / `motor_motorcad_verify` / `motor_param_matrix` 全部接入，
+  真实设计样本（规格 + 几何 + 结论 + 误差带）现在会回流。
+  `motor_l0_pipeline` / `motor_design_validate` 只触发 flush 不落盘（避免同源重复与无结论噪声）。
+- **已解决案例公开页直链**：`lib/issue-resolved.mjs` 新增 `rec_id`（分类+症状+根因 sha1 前 12 位，
+  幂等键）；故障协助的相似案例结果附带 `public_url`，可一键打开对应公开页。
+- 新增测试 `tests/experience-channel.test.mjs`（26 项断言，含 12 个身份字段红线扫描）。
+
+### Changed
+- `knowledgeBaseUrl` 默认值由空改为在线知识库公开导航页，故障协助 / 额度用尽 /
+  案例提交等文案现在带可用的「先查知识库」入口；`cordis.patch.yml` 同步统一为无 `www` 的同一地址。
+
+### Fixed
+- **design_exp 通道静默失效（重大）**：此前 `reportExperience` 在全仓**没有任何调用点**，
+  注释所声称的 `setupExperienceUpload` 周期 flush **并不存在**；样本只写入本地
+  `experience.jsonl` 从不上传，48 小时后还会被滚动 GC 清除，通道实质失效 ——
+  这也是审计中「experience 记录全为冒烟占位」的根因。本次补齐 flush 调度与 6 个工具的落盘点。
+- L2 降级态（`confidence: 'low'` 字符串）不再被当作数值写入样本，避免非 FEA 估算污染真值库。
+
+### Verified
+- `scripts/verify.mjs` 全量门禁通过（15 工具注册、YAML 无重复键、defineTool output schema 防线）。
+- 测试：11 个用例中 8 个全过；`env-probe` / `free-quota-offline` / `motorcad-com-bridge` 共 3 项失败，
+  经 **git stash 对照验证为存量问题**（未改动基线代码同样失败且失败项一致，成因分别是
+  本机 python 探测、配额计数边界、本机无 Motor-CAD 的 COM 解释器），**非本次回归**。
+- 端到端：design_exp 样本经 `POST /api/dsh/experience` 落接收端 `['exp']`，
+  并已由 `MIRROR_URLS` 扇出至 p15v 本地镜像落盘。
+- 版本语义：`PLUGIN_VERSION` 仅用于回传上报，代码无 `rc` 预发布分支，
+  故 rc → 正式版不改变任何额度 / 授权闸门行为。
+
+---
+
 ## [1.0.0-rc.23] - 2026-10-21
 
 ### Added

@@ -108,6 +108,7 @@ export async function runFaultAssist(args, config = {}) {
       if (m.remediation) blocks.push(`改进措施：${m.remediation}`)
       if (m.resolution_process) blocks.push(`解决过程：${m.resolution_process}`)
       if (Array.isArray(m.tags) && m.tags.length) blocks.push(`标签：${m.tags.join('、')}`)
+      if (m.public_url) blocks.push(`公开页（可直阅）：${m.public_url}`)
     })
   } else {
     blocks.push('\n⚠️ 知识库暂无高度匹配的已解决案例。建议：')

@@ -389,6 +389,18 @@ export async function registerL0Estimate(ctx, config = {}) {
       try {
         // rc.13：闸门内聚到 runL0Estimate 纯函数入口（P0-门1）。
         const result = runL0Estimate(args, config)
+        // 设计经验注入（design-assist）：把 KB-A/KB-B 相关经验追加到结果对象，
+        // fire-and-forget，失败静默，绝不阻断设计主流程。
+        {
+          const { withDesignAssist } = await import('../../lib/design-assist.mjs')
+          const p = (args?.params_list?.[0]?.params) || {}
+          const kw = p.power_kw ?? p.power ?? ''
+          const poles = p.poles ?? ''
+          const mt = p.motor_type ?? ''
+          const q = ['电机', '设计', '效率', '温升', '优化', String(mt), String(kw), String(poles)]
+            .filter(Boolean).join(' ')
+          await withDesignAssist(result, { config, q, limit: 5 })
+        }
         logUsage(getUsageSink(config), {
           tool: 'motor_l0_estimate', ok: true, elapsed_ms: Date.now() - t0,
           n: result?.total ?? args?.params_list?.length ?? 0,
@@ -396,20 +408,16 @@ export async function registerL0Estimate(ctx, config = {}) {
           sort_by: args?.sort_by, top_n: args?.top_n,
         })
         scheduleTelemetry(config)
-        // 设计经验脱敏回传（并行第二通道，默认关闭）：
-        //   开启 designExperienceUpload 时，对本次返回的 TopN 结果裁 design_exp
-        //   （规格+几何+结论+误差带，已脱敏白名单）落本地 experience.jsonl，
-        //   由 index.mjs 的 setupExperienceUpload 周期 flush 增量回传。
-        //   开关关 → getExperienceSink 返回 null → logExperience 静默，零副作用。
+        // 设计经验脱敏回传（并行第二通道）：
+        //   落盘走统一入口 logDesignExperience（开关关则静默，零副作用）；
+        //   上报走 scheduleExperience 节流 flush —— 2026-10-24 修复：此前
+        //   reportExperience 在全仓无任何调用点（注释声称的 setupExperienceUpload
+        //   并不存在），样本只落盘不上报，48h 后还被 GC 抹掉，通道实质失效。
         {
-          const { getExperienceSink, logExperience, buildDesignExp } =
+          const { logDesignExperience, scheduleExperience } =
             await import('../../lib/experience-upload.mjs')
-          const sink = getExperienceSink(config)
-          if (sink) {
-            for (const row of result?.results ?? []) {
-              logExperience(sink, buildDesignExp(row, {}))
-            }
-          }
+          logDesignExperience(config, result?.results ?? [])
+          scheduleExperience(config)
         }
         return JSON.stringify(result, null, 2)
       } catch (err) {

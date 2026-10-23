@@ -351,6 +351,11 @@ const CONFIG_SCHEMA = {
       default: 200,
       description: 'design_exp 单批上限条数',
     },
+    experienceMinIntervalMs: {
+      type: 'number',
+      default: 60000,
+      description: 'design_exp 上报节流窗口（毫秒）；0 = 不节流。未设时回退 telemetryMinIntervalMs',
+    },
     // ---- 已解决问题回流（P1-B；贡献型、不占配额，默认关闭）----
     // 用户在插件里解决问题后，通过 submit_resolved_case 工具把「问题分类 / 症状 /
     // 根因 / 改进措施 / 解决过程」发回接收端（/api/dsh/issue-resolved），喂在线知识库。
@@ -386,8 +391,18 @@ const CONFIG_SCHEMA = {
     // ---- 在线知识库入口（P1-C；为空 = 所有文案不带链接）----
     knowledgeBaseUrl: {
       type: 'string',
+      default: 'https://workbuddy.link/p/xWcD0qQyCUoGVl98S2LHei',
+      description: '在线知识库地址（公开导航页）；配置后，故障协助 / 额度用尽文案 / submit_resolved_case 提示会带「先查知识库」入口',
+    },
+    kbQueryEndpoint: {
+      type: 'string',
       default: '',
-      description: '在线知识库地址；配置后，额度用尽文案与 submit_resolved_case 提示会带「先查知识库」入口',
+      description: '设计经验统一查询端点（design-assist）；空 = 自动回退 commerceBackendUrl + /api/dsh/kb/query；二者都空 = 设计前不注入经验',
+    },
+    designAssistEnabled: {
+      type: 'boolean',
+      default: true,
+      description: '设计经验注入（design-assist）总开关（默认开；显式 false 退出设计前经验注入，opt-out）',
     },
     // ---- 工程 / 回归（与 lib/regression-gate.mjs、tools/l0/pipeline.mjs 内默认一致）----
     motorDesignRoot: {
