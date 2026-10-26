@@ -35,6 +35,8 @@ import { assessApplicability, scenarioFromMatrix } from '@wangxue98/dsh-motor-ai
 import { assertFreeQuota, QuotaExceededError } from '../../lib/quota.mjs'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
 import { withFaultAssistHint } from '../../lib/fault-report.mjs'
+import { resolveVfdSpec, resolveIp67Spec, runVfdIp67, CARRIER_DEFAULT_KHZ }
+  from './vfd-ip67-model.mjs'
 
 /** 工具入参声明 */
 export const TOOL_PARAMS = {
@@ -48,10 +50,31 @@ export const TOOL_PARAMS = {
     description: '排序字段：efficiency / efficiency_raw / torque_density / temp_rise，默认 efficiency。' +
       '注意：默认 efficiency 排序已改用未封顶真值（efficiency_raw），避免大机座整批触顶时排序被压平',
   },
+  vfd: {
+    type: 'object',
+    description: 'v0.6.8 P2：变频驱动建模（M1~M7）。默认 OFF（env DSH_L0_VFD 亦可开）。' +
+      'filter(none/dvdt/sine) | cable_m | k_h | fan(self/independent，默认 independent) | ' +
+      'carrier_khz(默认 3000Hz，仅记录) | min_speed_rpm | shaft_current_a | bearing | ' +
+      'insulation_coordination_margin | surge_withstand_ratio | insulation_life_years | ' +
+      'emc_margin_db | immunity_level | control | field_weakening_ratio | torque_bandwidth_hz | ' +
+      'dead_time_us | kh_basis | kh_scan | th_band_lookup | target_temp_rise。' +
+      '⚠ 开启后仅新增 *_vfd 字段，不覆写既有温升/损耗/效率（L0 原按 50Hz 正弦计算）。',
+  },
+  ip67: {
+    type: 'object',
+    description: 'v0.6.8 P2：IP67 结构技术点 S1~S8 登记与可喂入项抽取（IEC 60034-5 / GB/T 4942.1）。' +
+      '默认 OFF（env DSH_L0_IP67 亦可开）。joint_seal | shaft_seal | terminal_box_gland | ' +
+      'lead_capillary_blocked | breather | coating(C3/C4/C5) | insulation_life_years | ' +
+      'tests{ip6x,ipx7,insulation_retest,thermal_cycle}。⚠ CM 域在场即参与均分，不达标值喂入会拉低 F。',
+  },
+  vfd_measures: {
+    type: 'boolean',
+    description: 'v0.6.8 P2：仅 vfd 开启时生效。评估四项降损措施（滤波器/独立风机/加大机座/低损耗硅钢）各自的降温效果与达标性。',
+  },
 }
 
 /** 允许参与排序的字段白名单（防注入 sort 到任意键） */
-export const SORTABLE_FIELDS = ['efficiency', 'efficiency_raw', 'torque_density', 'temp_rise', 'total_loss', 'power']
+export const SORTABLE_FIELDS = ['efficiency', 'efficiency_raw', 'torque_density', 'temp_rise', 'temp_rise_vfd', 'total_loss', 'power']
 
 /** temp_rise 为「越小越好」，其余为「越大越好」 */
 const ASCENDING_FIELDS = new Set(['temp_rise', 'total_loss'])
@@ -65,6 +88,50 @@ const ASCENDING_FIELDS = new Set(['temp_rise', 'total_loss'])
 function sortKey(row, sortBy) {
   const v = sortBy === 'efficiency' ? (row.efficiency_raw ?? row.efficiency) : row[sortBy]
   return typeof v === 'number' && Number.isFinite(v) ? v : 0
+}
+
+/**
+ * v0.6.8 P2：对结果集施加变频 + IP67 建模（默认 OFF，零回归）
+ * ---------------------------------------------------------------------------
+ * L0 全程按 **50Hz 理想正弦**计算；变频工况的谐波附加损耗与低速冷却衰减此前完全未建模，
+ * 既有温升是正弦工况值。
+ *
+ * 本函数只在 vfd/ip67 显式开启时介入，且**只新增字段、不覆写**（*_vfd / vfd_model /
+ * ip67_model），既有 temp_rise / total_loss / efficiency 保持正弦口径不变 —— 复用齿磁密
+ * 双口径事故的教训：口径升级绝不能静默改写旧字段。
+ *
+ * 必须在排序**之前**调用：sort_by='temp_rise_vfd' 需要该字段已就位。
+ * @param {object[]} results 估算结果数组（原地附加字段）
+ * @param {object} args 已归一化的入参
+ * @param {object} [opts] { estimateFn } 措施③（几何变更）重估回调
+ * @returns {boolean} 是否介入
+ */
+function applyVfdIp67Models(results, args, opts = {}) {
+  if (!Array.isArray(results) || !results.length) return false
+  const vfdSpec = resolveVfdSpec(args.vfd)
+  const ip67Spec = resolveIp67Spec(args.ip67)
+  if (!vfdSpec.enabled && !ip67Spec.enabled) return false
+
+  const withMeasures = args.vfd_measures === true
+  for (const r of results) {
+    try {
+      const row = r?.params ?? {}
+      const { vfd_model, ip67_model } = runVfdIp67(
+        r, row,
+        { vfd: vfdSpec, ip67: ip67Spec },
+        { ...opts, with_measures: withMeasures },
+      )
+      if (vfd_model) {
+        r.vfd_model = vfd_model
+        // 顶层平铺高频量（供 sort_by 与下游读取）；原字段不受影响
+        r.temp_rise_vfd = vfd_model.temp?.vfd ?? null
+        r.total_loss_vfd = vfd_model.losses?.vfd?.total_loss ?? null
+        r.efficiency_vfd_raw = vfd_model.efficiency?.vfd ?? null
+      }
+      if (ip67_model) r.ip67_model = ip67_model
+    } catch { /* 建模异常不阻断点估计：该行保持正弦口径 */ }
+  }
+  return true
 }
 
 /**
@@ -190,6 +257,9 @@ export function runL0Estimate(rawArgs, config = {}) {
         }
       }
 
+      // v0.6.8 P2：变频 + IP67 建模（排序前介入，供 temp_rise_vfd 排序/读取）
+      applyVfdIp67Models(results, args, { estimateFn: (r2) => quickL0Estimate(r2, estimateOpts(r2)) })
+
       if (results.length === paramsList.length) {
         const elapsed = Date.now() - started
         const ascending = ASCENDING_FIELDS.has(sortBy)
@@ -265,6 +335,9 @@ export function runL0Estimate(rawArgs, config = {}) {
       failures.push({ index: i, error: String(err?.message ?? err) })
     }
   }
+
+  // v0.6.8 P2：变频 + IP67 建模（排序前介入，供 temp_rise_vfd 排序/读取）
+  applyVfdIp67Models(results, args, { estimateFn: (r2) => quickL0Estimate(r2, estimateOpts(r2)) })
 
   const ascending = ASCENDING_FIELDS.has(sortBy)
   results.sort((a, b) => (ascending

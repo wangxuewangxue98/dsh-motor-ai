@@ -30,11 +30,12 @@ import {
   PMSM_DEFAULT_POLE_ARC, PMSM_DEFAULT_PM_THICK_MM,
   DEFAULT_LINE_FREQ_HZ, DEFAULT_INSULATION_CLASS,
   round1, round2, clamp,
+  STACKING_FACTOR, AIR_GAP_FLUX_BY_POLES, AIR_GAP_FLUX_DEFAULT,
 } from '@wangxue98/dsh-motor-ai-core'
 import {
   normalizeSpec, assertMatrixShape, COOLING_ALLOWED, buildHandoff,
 } from '@wangxue98/dsh-motor-ai-core'
-import { computeTorque, computeD2L, computeLambda, validateLambda, deriveElectricalClosure } from '@wangxue98/dsh-motor-ai-core'
+import { computeTorque, computeD2L, computeLambda, validateLambda, deriveElectricalClosure, computeTorqueD2L, deriveTorqueEnvelope } from '@wangxue98/dsh-motor-ai-core'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
 import { assertFreeQuota, QuotaExceededError } from '../../lib/quota.mjs'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
@@ -61,7 +62,17 @@ export const TOOL_PARAMS = {
   stator_od_limit: { type: 'number', description: '定子外径上限 (mm)。缺省时按基准尺寸自伸缩（≈扫描空间上界×1.05，向上取整到 50mm），保证默认路径不被夹紧；显式传入（机座号 / 隔爆外壳等硬约束）则严格尊重，夹紧时会回吐 warning' },
   base_diameter: { type: 'number', description: '基准内径中心 (mm)，覆盖经验估算' },
   base_length: { type: 'number', description: '基准铁心长度中心 (mm)' },
-  count: { type: 'number', description: '目标方案数，默认 20' },
+  count: { type: 'number', description: '目标方案数，默认 1000' },
+  // ---- v0.4.0 P0-3：极数候选可配置 ----
+  pole_span: { type: 'number', description: 'v0.4.0：极数候选扩展跨度（偶数档），默认 2（主极 ±2）。传 4 则生成主极 ±2/±4。仅当未显式传 pole_candidates 时生效' },
+  pole_candidates: { type: 'array', description: 'v0.4.0：极数候选显式列表（如 [4,6,8]），优先级高于 pole_span，过滤非法极数（须 2~24 偶数）' },
+  poles_strict: { type: 'boolean', description: 'v0.4.0：锁定极数，只生成用户指定 poles，不扩展候选（用于「只验证该极数」）' },
+  // ---- v0.4.1：undersized 过滤 ----
+  filter_undersized: { type: 'boolean', description: 'v0.4.1：剔除「需求扭矩 > 最大提供转矩」的几何偏小候选行，默认 false（env DSH_L0_FILTER_UNDERSIZED 亦可开）。判据基于未标定的典型负荷代理值，属量级判断' },
+  // ---- v0.6.7 L2：tooth_width 候选维度 ----
+  tw_axis: { type: 'boolean', description: 'v0.6.7 L2：开启 tooth_width 候选维度（显式齿宽通道进池），默认 false（env DSH_L0_TW_AXIS 亦可开）。每行在派生齿宽之外追加若干齿宽档，使齿磁密 Bt 可覆盖 EM0103 带宽 [1.4,1.7]T —— 默认池 Bt 恒 ≈0.72~0.81T（Qs/Di 精确约掉），达标设计在池内不存在，换任何排序键都检索不到' },
+  tw_axis_targets: { type: 'array', description: 'v0.6.7 L2：目标齿磁密 (T) 列表，默认 [1.55,1.2]（1.55=EM0103 带宽中心，1.2=部分抬升档）。按各行极数的分档 Bg 反解齿宽乘子（与引擎同源同表，Bg 再标定后自动自适应）；控制档（派生齿宽）恒保留作对照' },
+  tw_axis_factors: { type: 'array', description: 'v0.6.7 L2：齿宽乘子列表（相对派生齿宽 π·Di/2Qs），显式给出时优先于 tw_axis_targets（单变量对照用，不依赖 Bg）。钳 [0.5,1.0]：<0.5×派生 ⇒ 齿宽<0.25×槽距，RMxprt 槽形反驱会产出顶宽>底宽的倒梯形槽（probe_slot_geom 实证），物理不可下线' },
   line_freq_hz: { type: 'number', description: `电源频率 (Hz)，默认 ${DEFAULT_LINE_FREQ_HZ}。同步转速 n_sync=120·f/p，60Hz 电网与 VFD 变频工况必须显式传入，否则 V16 会误判超同步` },
   insulation_class: { type: 'string', description: `绝缘等级 B/F/H，默认 ${DEFAULT_INSULATION_CLASS}。B=80K / F=105K / H=125K 温升限值` },
 }
@@ -92,12 +103,38 @@ export function recommendPoles(speedRpm, lineFreqHz = DEFAULT_LINE_FREQ_HZ) {
   return 8
 }
 
-/** 候选极数：主极数 ± 2 档（physics_kernel.py:553-557） */
-export function poleCandidates(poles) {
-  const list = [poles]
-  if (poles > 2) list.push(poles - 2)
-  if (poles < 8) list.push(poles + 2)
-  return list.filter((p) => p >= 1)
+/**
+ * 候选极数（v0.4.0 P0-3：不再硬编码 ±2，改为可配置）
+ * ---------------------------------------------------------------------------
+ * 入参 opts 三选一优先级：
+ *   polesStrict=true   → 仅主极数（不扩展，用于「只验证用户指定极数」）
+ *   poleCandidates=[]  → 显式极数列表（过滤非法：必须 2~24 的偶数，防御）
+ *   poleSpan=N         → 主极数 ±N（按偶数极数档，N 缺省 2，零回归）
+ *
+ * 旧实现 [poles, poles-2 (if>2), poles+2 (if<8)] 等价于 poleSpan=2，已用
+ * poleSpan 默认 2 复刻，行为逐字节一致。
+ *
+ * @param {number} poles 主极数（用户指定或 recommendPoles 推荐）
+ * @param {object} [opts] { poleSpan, poleCandidates, polesStrict }
+ * @returns {number[]} 去重后的候选极数列表
+ */
+export function poleCandidates(poles, opts = {}) {
+  const p = Math.round(Number(poles))
+  if (!Number.isFinite(p) || p < 2) return [poles]
+  if (opts.polesStrict === true) return [p]
+  if (Array.isArray(opts.poleCandidates) && opts.poleCandidates.length > 0) {
+    const out = opts.poleCandidates
+      .map((x) => Number(x))
+      .filter((x) => Number.isFinite(x) && x >= 2 && x % 2 === 0 && x <= 24)
+    return out.length ? [...new Set(out)] : [p]
+  }
+  const span = Number.isFinite(Number(opts.poleSpan)) ? Math.max(0, Math.floor(Number(opts.poleSpan))) : 2
+  const list = [p]
+  for (let s = 2; s <= span; s += 2) {
+    if (p - s >= 2) list.push(p - s)
+    if (p + s <= 24) list.push(p + s)
+  }
+  return [...new Set(list)].filter((x) => x >= 2 && x % 2 === 0)
 }
 
 /**
@@ -174,6 +211,124 @@ export function defaultOdLimit(baseD, scanRange, poleList, ratioOf) {
   return Math.ceil((need * 1.05) / 50) * 50
 }
 
+/**
+ * v0.4.1：env 开关 —— 是否剔除「几何偏小（需求 > 最大提供）」的候选行。
+ * 默认 OFF（零回归）：该判据基于典型电磁负荷代理值，属量级判断，未经真值标定；
+ * 打开后可能整批被滤空，故仅保留非空兜底。单变量对照用，toggle 证零回归。
+ */
+const ENV_FILTER_UNDERSIZED = 'DSH_L0_FILTER_UNDERSIZED'
+function isFilterUndersizedEnabled(spec = {}) {
+  if (spec?.filter_undersized !== undefined) return spec.filter_undersized === true || spec.filter_undersized === 'true'
+  const v = (typeof process !== 'undefined' && process.env) ? process.env[ENV_FILTER_UNDERSIZED] : undefined
+  return v === '1' || v === 'true' || v === 'on' || v === 'yes'
+}
+
+/**
+ * v0.6.7 L2：tooth_width 候选维度（显式齿宽通道进池）
+ * ---------------------------------------------------------------------------
+ * 背景（output/p2_top_ranking_1000_analysis.md 第一方复跑）：默认池每行
+ * tooth_width 恒为派生值 0.5×槽距 ⇒ Bt = 4·Bg/(π·k_stack)（Qs/Di 精确约掉）
+ * ⇒ 450kW 实测池内 Bt∈[0.72,0.81]T，而 EM0103 带宽 [1.4,1.7]T —— **达标
+ * 设计在池内不存在**，Top10 无论按效率还是温升排序都检索不到；附件中
+ * Bt=1.56T 的设计是 tooth_width=7.98mm 显式通道的人工迭代产物，非池内原生行。
+ *
+ * 本维度把该显式通道矩阵化：每个基础几何行追加若干齿宽档（控制档=派生齿宽
+ * 恒保留），使 Bt 覆盖 EM0103 带宽。Bt 与齿宽严格成反比 —— formula-engine
+ * `toothBraw = 2·Bg·Di/(Zs·toothWidthMm·k_stack)` 两个口径都吃 params.tooth_width。
+ *
+ * 开关（默认 OFF，零回归）：spec.tw_axis（true/'true'）> env DSH_L0_TW_AXIS。
+ * 齿宽档来源二选一（factors 显式优先）：
+ *   · tw_axis_targets（默认 [1.55,1.2]）：目标 Bt ⇒ 按该行极数的分档 Bg 反解
+ *     乘子 f = 4·Bg/(π·k_stack·target)；Bg 取自 AIR_GAP_FLUX_BY_POLES（与引擎
+ *     airGapFluxForDesign 同源同表），Bg 再标定后档位自动自适应；
+ *   · tw_axis_factors：直接给乘子（不依赖 Bg，单变量对照用）。
+ * 乘子钳 [TW_AXIS_FACTOR_MIN, TW_AXIS_FACTOR_MAX]：<0.5×派生 ⇒ 齿宽<0.25×
+ * 槽距，RMxprt 槽形反驱会产出顶宽>底宽的倒梯形槽，物理不可下线；>1 加宽齿只会让 Bt
+ * 更低，无工程价值。
+ * 预算：候选总数仍等于 count（基础网格预算 ÷K、每行展开 K 档、按 D²L 邻近度
+ * 排序后截回 count）⇒ 不突破 maxMatrixSize、不改变 count 语义、无截断告警。
+ */
+export const TW_AXIS_FACTOR_MIN = 0.5
+export const TW_AXIS_FACTOR_MAX = 1.0
+const TW_AXIS_DEFAULT_TARGETS = [1.55, 1.2]
+const ENV_TW_AXIS = 'DSH_L0_TW_AXIS'
+const safeEnv = (name) => (typeof process !== 'undefined' && process.env) ? process.env[name] : undefined
+/** 与 core formula-engine ENV_ON 同口径（该常量未从 index 导出故复刻；门禁以控制行 Bt 反绑校验双源一致） */
+const envOnLocal = (v, dflt = true) => (v === undefined || v === '' ? dflt : !(v === '0' || String(v).toLowerCase() === 'false' || String(v).toLowerCase() === 'off'))
+/** 与 core bgBinsOn({}) 同口径：引擎侧 estimateOpts 不传 bgBins ⇒ 只认 env，缺省 ON */
+const bgBinsOnLocal = () => envOnLocal(safeEnv('DSH_L0_BG_BINS'), true)
+/** 该行极数/机型的设计意图 Bg（与 core airGapFluxForDesign(poles, mt, {}) 同式同表） */
+function bgForPoleLocal(poles, motorType) {
+  if (!bgBinsOnLocal()) return AIR_GAP_FLUX_DEFAULT
+  const bins = AIR_GAP_FLUX_BY_POLES[String(motorType ?? 'induction').toLowerCase()]
+  const v = bins?.[poles]
+  return Number.isFinite(v) ? v : AIR_GAP_FLUX_DEFAULT
+}
+
+/**
+ * 目标齿磁密 ⇒ 齿宽乘子（相对派生齿宽，与几何无关——只依赖极数/机型的 Bg）。
+ * 由 Bt(tw) = 4·Bg/(π·k_stack·f)（formula-engine 代入 tw = f·π·Di/(2·Zs)）
+ * 反解 ⇒ f = 4·Bg/(π·k_stack·target)，钳 [TW_AXIS_FACTOR_MIN, TW_AXIS_FACTOR_MAX]。
+ * @param {object} p { poles, motorType, targetBt }
+ * @returns {number} 乘子（钳后）；入参非法时回 1（控制档）
+ */
+export function twAxisFactorFor({ poles, motorType, targetBt }) {
+  const bg = bgForPoleLocal(poles, motorType)
+  const btNatural = (4 * bg) / (Math.PI * STACKING_FACTOR)   // 派生齿宽下的 Bt
+  const f = btNatural / Number(targetBt)
+  if (!Number.isFinite(f) || f <= 0) return 1
+  return clamp(f, TW_AXIS_FACTOR_MIN, TW_AXIS_FACTOR_MAX)
+}
+
+/**
+ * 解析 tooth_width 轴配置（buildParamMatrix 与门禁共用，纯函数）。
+ * @param {object} spec 规范化后的工具入参
+ * @returns {{on:boolean, mode:'targets'|'factors', targets:number[], factors:number[]|null, k:number}}
+ *   k = 每行档位数（targets 模式 = 1 控制档 + 目标数；factors 模式 = 乘子数）
+ */
+export function resolveTwAxis(spec = {}) {
+  const on = spec?.tw_axis !== undefined
+    ? (spec.tw_axis === true || spec.tw_axis === 'true')
+    : envOnLocal(safeEnv(ENV_TW_AXIS), false)
+  if (!on) return { on: false, mode: 'targets', targets: [], factors: null, k: 1 }
+  let factors = null
+  if (Array.isArray(spec?.tw_axis_factors) && spec.tw_axis_factors.length > 0) {
+    factors = spec.tw_axis_factors
+      .map((x) => Number(x))
+      .filter((x) => Number.isFinite(x) && x > 0)
+      .map((x) => clamp(x, TW_AXIS_FACTOR_MIN, TW_AXIS_FACTOR_MAX))
+    if (factors.length === 0) factors = null
+  }
+  if (factors) return { on: true, mode: 'factors', targets: [], factors, k: factors.length }
+  const tList = (Array.isArray(spec?.tw_axis_targets) && spec.tw_axis_targets.length > 0
+    ? spec.tw_axis_targets : TW_AXIS_DEFAULT_TARGETS)
+    .map((x) => Number(x))
+    .filter((x) => Number.isFinite(x) && x > 0)
+  const targets = tList.length > 0 ? tList : TW_AXIS_DEFAULT_TARGETS
+  return { on: true, mode: 'targets', targets, factors: null, k: 1 + targets.length }
+}
+
+/**
+ * 单行转矩包络：需求 vs 额定提供 vs 最大提供 → 可行性判据。
+ * 取代旧版 estTorque = torqueNm × D²L/D²L_base 线性类比（同几何多转矩点误差 max 523%）。
+ */
+function torqueEnvelopeFor({ demandNm, statorId, coreLength, motorType, cooling }) {
+  const cap = computeTorqueD2L(
+    { stator_id: statorId, core_length: coreLength, motor_type: motorType, cooling },
+    { cooling, motorType },
+  )
+  const env = deriveTorqueEnvelope(demandNm, cap.torque, motorType)
+  return {
+    torque_capability: cap.torque,
+    capability_source: cap.torque > 0 ? 'd2l' : 'unavailable',
+    torque_capability_max: env.torque_capability_max,
+    overload_factor: env.overload_factor,
+    torque_margin: env.torque_margin,
+    torque_margin_rated: env.torque_margin_rated,
+    torque_feasibility: env.torque_feasibility,
+  }
+}
+
 export function buildParamMatrix(rawSpec, config = {}) {
   if (!config || typeof config !== 'object') config = {}
   // rc.13 P0-门1（对齐 l0 v0.5.1）：纯函数入口过闸（脚本/CI 直调不再脱闸），
@@ -210,7 +365,7 @@ export function buildParamMatrix(rawSpec, config = {}) {
   const coolingInput = spec.cooling
   const cooling = COOLING_ALLOWED.includes(spec.cooling) ? spec.cooling : 'forced_air'
   // 外径上限见下方 dSteps/lSteps 之后 —— 默认值需依赖基准尺寸与极数表，无法在此定出
-  const requestedCount = Math.max(1, Math.floor(spec.count ?? 20))
+  const requestedCount = Math.max(1, Math.floor(spec.count ?? 1000))
   // rc.16 P0-2 严格模式（默认关）：要求"绝不截断"的调用方可以 fail-fast，
   // 而不是拿到被静默夹断的矩阵还以为跑满了。默认仍走告警，避免打断既有脚本。
   if (config.strictMaxMatrixSize === true && requestedCount > maxMatrixSize) {
@@ -220,6 +375,10 @@ export function buildParamMatrix(rawSpec, config = {}) {
     )
   }
   const count = Math.min(maxMatrixSize, requestedCount)
+  // v0.6.7 L2：tooth_width 候选维度（默认 OFF）。开启后基础网格预算 ÷K、每行
+  // 展开 K 个齿宽档 ⇒ 候选总数仍为 count（不突破 maxMatrixSize、无截断告警）。
+  const twAxis = resolveTwAxis(spec)
+  const gridBudget = twAxis.on ? Math.max(1, Math.ceil(count / twAxis.k)) : count
 
   // ---- PMSM 口径开关（P0，0.1.4）----
   // 缺省 → legacy 口径 idRatio(pole)=0.55+0.03(p−2)，与 0.1.3 / 程序 focused_scan 逐字节一致（零回归）；
@@ -248,7 +407,12 @@ export function buildParamMatrix(rawSpec, config = {}) {
   // ---- 扫描网格规模：保证够 count 又不至于暴量 ----
   // E 增强：spec.poles 显式给定时作为硬约束，不再 ±2 扩出异极数候选
   // （400kW 报告 26 条 V16 失败即源自 6 极规格混入 4 极变体污染 TopN）
-  const poleList = polesExplicit ? [poles] : poleCandidates(poles)
+  // v0.4.0 P0-3：非显式时极数候选可配置（pole_span / pole_candidates / poles_strict）
+  const poleList = polesExplicit ? [poles] : poleCandidates(poles, {
+    poleSpan: spec.pole_span,
+    poleCandidates: spec.pole_candidates,
+    polesStrict: spec.poles_strict,
+  })
   const perPole = Math.max(1, Math.ceil(count / poleList.length))
   const axis = Math.max(2, Math.ceil(Math.sqrt(perPole)))
 
@@ -268,7 +432,7 @@ export function buildParamMatrix(rawSpec, config = {}) {
   const odLimitNeeded = defaultOdLimit(baseD, scanRange, poleList, ratioOf)
   const odLimit = odLimitExplicit ?? odLimitNeeded
 
-  const matrix = []
+  let matrix = []
   const seenKeys = new Set()
   let comboIndex = 0
 
@@ -337,8 +501,6 @@ export function buildParamMatrix(rawSpec, config = {}) {
         const coreLength = fitLambdaWithinRange(dEff, l, pole)
         const lamCheck = validateLambda(coreLength, dEff, pole)
         const d2l = computeD2L(dEff, coreLength)
-        const baseD2l = computeD2L(baseD, baseL)
-        const estTorque = baseD2l > 0 ? round2((torqueNm * d2l) / baseD2l) : torqueNm
 
         // ---- 电气闭环（v0.1.6 核心修复）----
         // 由电压/转速/极数/几何反推自洽的 peak_current 与 turns_per_coil，
@@ -401,21 +563,21 @@ export function buildParamMatrix(rawSpec, config = {}) {
             ...(frame.grown || yokeLimitedByOdCap
               ? { stator_od_requested: od, stator_od_after_growth: odFinal }
               : {}),
-            estimated_torque: estTorque,
-            ref_model: 'L0-类比估算',
+            ref_model: 'L0-物理公式估算',
             scenario: 'analogy',
             target_torque: torqueNm,
-            // ---- v0.2.5 转矩口径契约（P0）----
-            // 10 万案例压测把 estimated_torque 当"承诺满足用户转矩的输出"断言，
-            // 报出 91.4% 守恒失效。复核结论：两者本就是不同物理量——
-            //   target_torque  = 9550·P/n  = 用户规格（硬约束）
-            //   estimated_torque = target·(D²L/D²L_base) = 按几何类比外推的可达转矩
-            // 同一几何下二者必然不同（差 D²L 比例），不是计算错误，而是口径未标注。
-            // 但该字段进了交接白名单（param-schema L1_DIAG_FIELDS），下游若当规格用即静默违约，
-            // 故显式给出 basis 标记与偏差，让消费方无法误用。
-            torque_basis: 'analogy_d2l',
-            torque_is_spec: false,
-            torque_ratio_estimated_over_target: baseD2l > 0 ? round2(d2l / baseD2l) : 1,
+            // ---- v0.4.1 转矩包络：需求 vs 提供（替代旧的 estimated_torque 线性类比）----
+            //   需求   torque_nm = 9550·P/n（规格，硬约束）
+            //   额定提供 = (π/2)·Bδ·A·D²·L·kw·kFe（典型电磁负荷，长期可输出）
+            //   最大提供 = 额定提供 × K（induction 2.0 / pmsm 1.8，规范经验值非标定）
+            //   判据 torque_feasibility: ample / overload_only / undersized / unknown
+            ...torqueEnvelopeFor({
+              demandNm: torqueNm,
+              statorId: round1(dEff),
+              coreLength,
+              motorType: motorResolved.type,
+              cooling,
+            }),
             // v0.1.6：电气闭环派生量 + PMSM 几何种子（项目基准 极弧0.688 / PM厚12mm）
             electrical_frequency_hz: closure?.freq_hz ?? round1((speedRpm * pole) / 120),
             back_emf_v: closure?.back_emf_v ?? null,
@@ -430,9 +592,53 @@ export function buildParamMatrix(rawSpec, config = {}) {
         })
 
         comboIndex += 1
-        if (matrix.length >= count) break outer
+        if (matrix.length >= gridBudget) break outer
       }
     }
+  }
+
+  // ---- v0.4.1 需求 vs 提供判据过滤（env 默认 OFF，单变量对照）----
+  // 剔除 undersized（需求 > 最大提供 ⇒ 几何偏小，必须放大机座）。
+  // 全滤空则保留原矩阵并告警 —— 判据基于未标定的典型负荷代理值，不可让广筛静默归零。
+  let undersizedFiltered = 0
+  if (isFilterUndersizedEnabled(spec)) {
+    const kept = matrix.filter((r) => r._physics?.torque_feasibility !== 'undersized')
+    undersizedFiltered = matrix.length - kept.length
+    if (kept.length > 0) matrix = kept
+    else undersizedFiltered = 0
+  }
+
+  // ---- v0.6.7 L2：tooth_width 候选维度展开（默认 OFF，零回归）----
+  // 每个基础行追加齿宽档：targets 模式 = [控制档(派生齿宽), 各目标反解档]；
+  // factors 模式 = 给定乘子档。行内 tooth_width 本就是 L1 必填显式字段，此处
+  // 仅改其取值 —— formula-engine 两个口径都吃 params.tooth_width。
+  let twAxisRows = 0
+  if (twAxis.on) {
+    const expanded = []
+    for (const r of matrix) {
+      const twBase = r.tooth_width
+      const variants = twAxis.mode === 'factors'
+        ? twAxis.factors.map((f) => ({ factor: f, target_t: null }))
+        : [
+            { factor: 1, target_t: null },
+            ...twAxis.targets.map((t) => ({
+              factor: twAxisFactorFor({ poles: r.poles, motorType: r.motor_type, targetBt: t }),
+              target_t: t,
+            })),
+          ]
+      for (const v of variants) {
+        expanded.push({
+          ...r,
+          tooth_width: round2(v.factor * twBase),
+          _physics: {
+            ...r._physics,
+            tw_axis: { factor: v.factor, target_t: v.target_t, tw_base_mm: twBase },
+          },
+        })
+        twAxisRows += 1
+      }
+    }
+    matrix = expanded
   }
 
   // ---- 按 D²L 与目标转矩的匹配度排序（physics_kernel.py:689-694）----
@@ -442,6 +648,8 @@ export function buildParamMatrix(rawSpec, config = {}) {
       Math.abs(a._physics.d_squared_l - targetD2l) -
       Math.abs(b._physics.d_squared_l - targetD2l))
   }
+  // L2：展开后总数 ≈ count（±K-1），按 D²L 邻近度截回 count，保持「目标方案数」语义
+  if (twAxis.on && matrix.length > count) matrix = matrix.slice(0, count)
 
   // truncated 必须拿「原始请求量」比，不能拿被 maxMatrixSize 夹断后的 count 比 ——
   // 后者恒为 false，会掩盖真实截断。
@@ -568,13 +776,78 @@ export function buildParamMatrix(rawSpec, config = {}) {
     })
   }
 
+  // v0.4.0 P0-2：极数候选透明度 —— 工具静默扩展候选极数（如用户指定 6 极却生成 8 极）
+  //   必须显式告知，并提供对照，避免「无声越权」。
+  //   当 poles_strict 时只列主极数；pole_span>2 时提示扩展幅度；recommendPoles 选的也标注来源。
+  const poleSource = spec.poles ? 'user' : (spec.pole_candidates ? 'explicit' : 'recommended')
+  warnings.push({
+    code: 'POLE_CANDIDATES',
+    level: 'info',
+    primary_pole: poles,
+    source: poleSource,
+    candidates: poleList,
+    strict: spec.poles_strict === true,
+    message: spec.poles_strict === true
+      ? `极数已锁定为 ${poles} 极（poles_strict=true），不扩展候选。`
+      : `极数候选集 = [${poleList.join(', ')}] 极（主极 ${poles} 极，来源=${poleSource}` +
+        `${spec.pole_span != null ? `，pole_span=${spec.pole_span}` : ''}）。` +
+        `若主极被 V16 判超同步，候选集中其余极数即替代方案，请对照查看。`,
+  })
+
+  // v0.4.1：需求 vs 提供判据过滤结果必须可见（否则「少了几行」无从察觉）
+  if (undersizedFiltered > 0) {
+    warnings.push({
+      code: 'UNDERSIZED_FILTERED',
+      level: 'info',
+      filtered_rows: undersizedFiltered,
+      returned_rows: returned.length,
+      criterion: '需求扭矩 > 最大提供转矩（额定提供 × 过载倍数）⇒ 几何偏小',
+      message:
+        `已剔除 ${undersizedFiltered} 行 undersized 候选（需求扭矩 > 最大提供转矩）。` +
+        `判据基于典型电磁负荷代理值 × 未标定的过载倍数，属量级判断，` +
+        `如需保守广筛请关闭 DSH_L0_FILTER_UNDERSIZED。`,
+    })
+  }
+
+  // ---- v0.6.7 L2：tooth_width 轴透明度（开启时强制可见，含物理下限告诫）----
+  let twAxisMeta = { on: false }
+  if (twAxis.on) {
+    const byPole = {}
+    for (const pole of poleList) {
+      byPole[pole] = twAxis.mode === 'factors'
+        ? twAxis.factors
+        : [1, ...twAxis.targets.map((t) => twAxisFactorFor({ poles: pole, motorType: motorResolved.type, targetBt: t }))]
+    }
+    twAxisMeta = {
+      on: true, mode: twAxis.mode, targets: twAxis.targets,
+      factors_resolved: twAxis.factors, factors_by_pole: byPole, expanded_rows: twAxisRows,
+    }
+    warnings.push({
+      code: 'TW_AXIS_ACTIVE',
+      level: 'info',
+      mode: twAxis.mode,
+      targets: twAxis.targets,
+      factors_by_pole: byPole,
+      message:
+        `tooth_width 候选维度已开启（mode=${twAxis.mode}）：每行在派生齿宽（0.5×槽距，Bt≈0.72~0.81T）之外` +
+        (twAxis.mode === 'factors'
+          ? `追加乘子 [${twAxis.factors.join(', ')}] 齿宽档。`
+          : `追加目标齿磁密 [${twAxis.targets.join(', ')}]T 反解的齿宽档（各极数乘子见 factors_by_pole；控制档=派生齿宽恒保留）。`) +
+        `乘子下限 ${TW_AXIS_FACTOR_MIN}：齿宽<0.25×槽距时 RMxprt 槽形反驱会产出顶宽>底宽的倒梯形槽，物理不可下线。` +
+        `齿宽为显式传入 ⇒ 下游 handoff 的 tooth_width 不再恒等于派生值，L1/RMxprt 槽形将随齿宽反驱变化，需按冲片工艺核对齿根宽。`,
+    })
+  }
+
   return {
     warnings,
     od_limit: odLimitMeta,
+    tw_axis: twAxisMeta,
     matrix: returned,
     total: matrix.length,
     returned: returned.length,
     truncated,
+    requested: requestedCount,
+    undersized_filtered: undersizedFiltered,
     spec: {
       power_kw: powerKw, speed_rpm: speedRpm, voltage_v: voltage, poles,
       motor_type: motorResolved.type,
@@ -607,6 +880,10 @@ export async function registerParamMatrix(ctx, config = {}) {
       '每个组合严格包含 L1 所需的 16 个顶层字段与 _physics 物理核验字段。\n' +
       '产出可直接作为 params_list 传给 motor_design_validate（先校验剔除 failed）\n' +
       '和 motor_l0_estimate（再估算排序），三者构成标准流水线。\n' +
+      'v0.6.7 L2：可选开启 tooth_width 候选维度（tw_axis=true / env DSH_L0_TW_AXIS）—— 每行在派生齿宽之外\n' +
+      '追加目标齿磁密反解的齿宽档，使齿磁密 Bt 可覆盖 EM0103 带宽 [1.4,1.7]T（默认池 Bt 恒 ≈0.72~0.81T，\n' +
+      '达标设计在池内不存在）；默认关闭，零回归。极数候选可配置（pole_span / pole_candidates / poles_strict）。\n' +
+      '转矩可行性改用物理包络（torque_feasibility: ample/overload_only/undersized/unknown），取代旧 D²L 线性类比。\n' +
       '本工具为纯本地计算，毫秒级返回，不调用任何外部求解器。',
     parameters: TOOL_PARAMS,
     output: {

@@ -24,6 +24,7 @@ import { runL0Estimate } from './l0-estimate.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
 import { assertFreeQuota, QuotaExceededError, newQuotaChain, withQuotaChain } from '../../lib/quota.mjs'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
+import { VFD_IP67_WARNING_TEXT, CARRIER_DEFAULT_KHZ } from './vfd-ip67-model.mjs'
 
 /** 工具入参声明（矩阵生成参数 + 聚合控制） */
 export const TOOL_PARAMS = {
@@ -40,7 +41,7 @@ export const TOOL_PARAMS = {
   stator_od_limit: { type: 'number', description: '定子外径上限 (mm)。缺省时按基准尺寸自伸缩（≈扫描空间上界×1.05，向上取整到 50mm），保证默认路径不被夹紧；显式传入（机座号 / 隔爆外壳等硬约束）则严格尊重，夹紧时回吐 OD_LIMIT_CLAMPED 告警' },
   base_diameter: { type: 'number', description: '基准内径中心 (mm)' },
   base_length: { type: 'number', description: '基准铁心长度中心 (mm)' },
-  count: { type: 'number', description: '目标方案数，默认 20（广筛场景可给 120）' },
+  count: { type: 'number', description: '目标方案数，默认 1000（广筛场景可给更大）' },
   top_n: { type: 'number', description: '回吐前 N 个方案，默认 10（聚合工具已封顶，避免回吐全量触发截断）' },
   sort_by: {
     type: 'string',
@@ -50,6 +51,34 @@ export const TOOL_PARAMS = {
     type: 'boolean',
     description: '是否把 TopN + L1 交接载荷写入文件（默认 true）。强烈建议开启：' +
       '模型读文件即可拿到完整候选，无需在上下文里搬运 120 行矩阵',
+  },
+  leverage_log: {
+    type: 'boolean',
+    description: 'v0.5.4 P1-5：是否聚合「杠杆审计」摘要（默认 false）。开启后按规则聚合可调余量分布' +
+      '（V07 齿宽/V08 轭厚/V15 匝数的精确反解量 min/median/max），并给出 Top1 行的杠杆建议；' +
+      '上下文只回紧凑聚合，明细在 handoff 文件',
+  },
+  vfd: {
+    type: 'object',
+    description: 'v0.6.8 P2：变频驱动建模（M1~M7）。默认 OFF（env DSH_L0_VFD 亦可开）。' +
+      'filter(none/dvdt/sine) | cable_m | k_h | fan(self/independent，默认 independent) | ' +
+      `carrier_khz(默认 ${CARRIER_DEFAULT_KHZ}Hz，仅记录) | min_speed_rpm | ` +
+      'shaft_current_a | bearing | insulation_coordination_margin | surge_withstand_ratio | ' +
+      'insulation_life_years | emc_margin_db | immunity_level | control | field_weakening_ratio | ' +
+      'torque_bandwidth_hz | dead_time_us | kh_basis | kh_scan | th_band_lookup | target_temp_rise。' +
+      '⚠ 开启后仅新增 *_vfd 字段，不覆写既有温升/损耗/效率（L0 原按 50Hz 正弦计算）。',
+  },
+  ip67: {
+    type: 'object',
+    description: 'v0.6.8 P2：IP67 结构技术点 S1~S8 登记与可喂入项抽取（IEC 60034-5 / GB/T 4942.1）。' +
+      '默认 OFF（env DSH_L0_IP67 亦可开）。joint_seal | shaft_seal | terminal_box_gland | ' +
+      'lead_capillary_blocked | breather | coating(C3/C4/C5) | insulation_life_years | ' +
+      'tests{ip6x,ipx7,insulation_retest,thermal_cycle}。⚠ CM 域在场即参与均分，不达标值喂入会拉低 F。',
+  },
+  vfd_measures: {
+    type: 'boolean',
+    description: 'v0.6.8 P2：仅 vfd 开启时生效。评估四项降损措施（滤波器/独立风机/加大机座/' +
+      '低损耗硅钢）各自的降温效果与达标性。',
   },
 }
 
@@ -97,10 +126,12 @@ export function runL0Pipeline(rawArgs, config = {}) {
   // 否则「外径被夹紧」这类会扭曲结论的异常在聚合链路里会被静默吞掉。
   const matrix = buildParamMatrix(args, chainCfg)
   const allRows = matrix.matrix
-  const requestedCount = Math.max(1, Math.floor(args.count ?? 20))
+  const requestedCount = Math.max(1, Math.floor(args.count ?? 1000))
 
   // ---- 第 2 步：批量物理校验 ----
-  const validated = runDesignValidate({ params_list: allRows }, chainCfg)
+  // include_reports: true —— v0.5.4 P1-5 leverage_log 需要逐行 headroom；
+  // 报告只在插件进程内消费，不会回吐上下文（pipeline 自建紧凑摘要）。
+  const validated = runDesignValidate({ params_list: allRows, include_reports: true }, chainCfg)
   const failedSet = new Set(validated.failed_indices ?? [])
   // 剔除 failed（物理不成立），保留 passed + warning
   const feasibleRows = allRows.filter((_, i) => !failedSet.has(i))
@@ -109,7 +140,13 @@ export function runL0Pipeline(rawArgs, config = {}) {
   const topN = Number(args.top_n) > 0 ? Number(args.top_n) : 10
   const sortBy = ['efficiency', 'efficiency_raw', 'torque_density', 'temp_rise', 'total_loss', 'power']
     .includes(args.sort_by) ? args.sort_by : 'efficiency'
-  const estimate = runL0Estimate({ params_list: feasibleRows, top_n: topN, sort_by: sortBy }, chainCfg)
+  // v0.6.8 P2：变频 + IP67 建模透传（normalizeSpec 对未登记嵌套对象原样保留）
+  const estimate = runL0Estimate({
+    params_list: feasibleRows, top_n: topN, sort_by: sortBy,
+    ...(args.vfd != null ? { vfd: args.vfd } : {}),
+    ...(args.ip67 != null ? { ip67: args.ip67 } : {}),
+    ...(args.vfd_measures != null ? { vfd_measures: args.vfd_measures } : {}),
+  }, chainCfg)
 
   // ---- rc.16 P0-1：密度收敛自检（默认 OFF）----
   // 背景：Top1 效率随采样密度漂移（20→91.56 … 2000→92.06 … 10000→92.09），
@@ -152,6 +189,58 @@ export function runL0Pipeline(rawArgs, config = {}) {
     }
   }
 
+  // ---- v0.5.4 P1-5：杠杆审计聚合（默认 OFF）----
+  // 把全批的 headroom（V07 齿宽/V08 轭厚/V15 匝数精确反解）按规则聚合成
+  // min/median/max 分布 + Top1 行的逐条杠杆建议，上下文只回紧凑摘要，明细进 handoff。
+  // 内部复用同一调用链（freeQuotaEnabled:false 派生），不额外扣免费额度。
+  let leverageLog = null
+  if (args.leverage_log === true) {
+    const reports = validated.reports ?? []
+    const byRule = {}
+    for (const r of reports) {
+      const headroom = r?.metrics?.leverage_headroom ?? {}
+      for (const [rule, h] of Object.entries(headroom)) {
+        const adj = h.adjustable_mm ?? h.adjustable
+        const slot = byRule[rule] ?? (byRule[rule] = { rule, field: h.field, n: 0, adjustable: [] })
+        slot.n += 1
+        if (typeof adj === 'number' && Number.isFinite(adj)) slot.adjustable.push(adj)
+      }
+    }
+    const median = (a) => {
+      if (!a.length) return null
+      const s = [...a].sort((x, y) => x - y)
+      const m = Math.floor(s.length / 2)
+      return s.length % 2 ? s[m] : Math.round(((s[m - 1] + s[m]) / 2) * 100) / 100
+    }
+    const byRuleOut = Object.fromEntries(Object.entries(byRule).map(([k, v]) => [k, {
+      rule: v.rule, field: v.field, n: v.n,
+      adjustable_min: v.adjustable.length ? Math.round(Math.min(...v.adjustable) * 100) / 100 : null,
+      adjustable_median: median(v.adjustable),
+      adjustable_max: v.adjustable.length ? Math.round(Math.max(...v.adjustable) * 100) / 100 : null,
+    }]))
+    // Top1 行杠杆建议：复用 leverage_audit 模式（innerCfg 不另扣额度）。
+    // 注意 estimate.recommended 是紧凑展示对象（无 .params），必须从 results 取完整行。
+    const topRow = (estimate.results ?? []).find((r) => r?.params) ?? null
+    let top1 = null
+    if (topRow?.params) {
+      try {
+        const audit = runDesignValidate({ leverage_audit: topRow.params },
+          { ...chainCfg, freeQuotaEnabled: false })
+        top1 = {
+          status: audit.status,
+          actionable: audit.actionable,
+          issues_n: audit.issues?.length ?? 0,
+        }
+      } catch { /* 审计失败不阻断主链 */ }
+    }
+    leverageLog = {
+      by_rule: byRuleOut,
+      top1,
+      note: 'adjustable>0 表示还有下调/上调余量；median 接近 0 说明该规则在本批已普遍贴限，'
+        + '继续在该维度发力收益有限。Top1 的 actionable 是「拧到多少」的精确反解。',
+    }
+  }
+
   // ---- 计数自洽校验（让模型一眼确认没有丢行）----
   const sumStatus = (validated.summary?.passed ?? 0)
     + (validated.summary?.warning ?? 0)
@@ -184,6 +273,7 @@ export function runL0Pipeline(rawArgs, config = {}) {
           count_ok: countOk,
           sort_by: sortBy,
           density,
+          leverage_log: leverageLog,
         },
         recommended: estimate.recommended,
         results: estimate.results,
@@ -211,8 +301,65 @@ export function runL0Pipeline(rawArgs, config = {}) {
     })
   }
 
+  // ---- v0.6.8 P2：变频 + IP67 紧凑摘要（明细在结果行的 vfd_model / ip67_model 内）----
+  // 只回紧凑顶层摘要，让调用方一眼看到「是否施加了变频修正 + 温升越限与否」，
+  // 逐行明细（损耗拆分/灵敏度扫描/四项措施/EC 可喂入项）留在结果行，避免撑爆上下文。
+  const rowWithVfd = (estimate.results ?? []).find((r) => r?.vfd_model) ?? null
+  const rowWithIp67 = (estimate.results ?? []).find((r) => r?.ip67_model) ?? null
+  const vfdM = rowWithVfd?.vfd_model ?? null
+  const ip67M = rowWithIp67?.ip67_model ?? null
+  const vfdIp67Warnings = []
+  for (const r of (estimate.results ?? [])) {
+    for (const w of (r?.vfd_model?.warnings ?? [])) vfdIp67Warnings.push(w)
+    for (const w of (r?.ip67_model?.warnings ?? [])) vfdIp67Warnings.push(w)
+  }
+  const vfdSummary = vfdM ? {
+    applied: true,
+    k_h: vfdM.k_h,
+    k_h_source: vfdM.k_h_source,
+    k_h_filter: vfdM.k_h_filter,
+    harmonic_factor: vfdM.temp?.harmonic_factor ?? null,
+    temp_rise_sine: vfdM.temp?.sine ?? null,
+    temp_rise_vfd: vfdM.temp?.vfd ?? null,
+    temp_rise_vfd_min_speed: vfdM.temp?.vfd_min_speed ?? null,
+    insulation_limit_k: vfdM.temp?.limit_k ?? null,
+    over_limit_k: vfdM.temp?.over_limit_k ?? null,
+    efficiency_vfd: vfdM.efficiency?.vfd ?? null,
+    cooling_fan: vfdM.cooling?.fan ?? null,
+    cooling_fan_source: vfdM.cooling?.fan_source ?? null,
+    carrier_khz: vfdM.carrier?.khz ?? null,
+    carrier_source: vfdM.carrier?.source ?? null,
+    ec_feed_declared_n: vfdM.ec_feed?.declared_n ?? 0,
+    ec_feed_gap_n: vfdM.ec_feed?.gap_n ?? 0,
+    measures_n: vfdM.measures?.measures?.length ?? 0,
+    measures_feasible: vfdM.measures?.recommendation?.feasible ?? null,
+    note: '⚠ 结果行的 temp_rise / total_loss / efficiency 仍为**正弦口径**（不覆写）；'
+      + '变频工况判定请读 *_vfd 字段。',
+  } : null
+  const ip67Summary = ip67M ? {
+    applied: true,
+    standard: ip67M.standard,
+    declared_n: ip67M.declared_n,
+    gap_n: ip67M.gap_n,
+    verified: ip67M.verified,
+    feedable_n: ip67M.feedable_n,
+    feedable: Object.keys(ip67M.feedable ?? {}),
+    feed_risk: ip67M.feed_risk,
+  } : null
+
+  // v0.6.8 P2：变频/IP67 建模告警（去重后按代码聚合，避免 TopN 重复刷屏）
+  for (const code of [...new Set(vfdIp67Warnings)]) {
+    warnings.push({
+      code,
+      level: 'warning',
+      message: VFD_IP67_WARNING_TEXT[code] ?? code,
+    })
+  }
+
   return {
     warnings,
+    // v0.6.8 P2：复合告警（去重后按代码聚合，避免 TopN 重复刷屏）
+    vfd_ip67_warnings: [...new Set(vfdIp67Warnings)],
     od_limit: matrix.od_limit,
     summary: {
       requested_count: requestedCount,
@@ -235,6 +382,11 @@ export function runL0Pipeline(rawArgs, config = {}) {
     },
     // rc.16 P0-1：默认 null（未开启自检）；开启后给出两档密度漂移量
     density,
+    // v0.6.8 P2：变频 + IP67 紧凑摘要（默认 null = 纯正弦口径）
+    vfd: vfdSummary,
+    ip67: ip67Summary,
+    // v0.5.4 P1-5：默认 null（leverage_log=false）；开启后回紧凑杠杆聚合
+    leverage_log: leverageLog,
     efficiency_note: estimate.efficiency_note,
     recommended: estimate.recommended,
     results: estimate.results,
@@ -266,7 +418,10 @@ export async function registerL0Pipeline(ctx, config = {}) {
       '结果内置计数自检 summary.count_ok：passed+warning+failed 必须等于 generated（= 请求数，除非截断），\n' +
       '一眼确认没有丢行。\n' +
       '⚠️ 仅在需要单独调试某一步（如查看完整校验报告、手调 failed 阈值）时，才拆开用三个独立工具；\n' +
-      '常规广筛请直接用本工具，不要亲手把 120 行矩阵在对话里传来传去。',
+      '常规广筛请直接用本工具，不要亲手把 120 行矩阵在对话里传来传去。\n' +
+      'v0.5.4：leverage_log=true 可在同一次调用里拿到全批杠杆审计聚合\n' +
+      '（V07 齿宽/V08 轭厚/V15 匝数的可调余量分布 + Top1 精确反解），为设计杠杆验证供料。\n' +
+      'v0.6.8 P2：vfd/ip67 开启后，结果行新增 *_vfd 字段与 vfd_model/ip67_model（默认 OFF，零回归）。',
     parameters: TOOL_PARAMS,
     output: {
       schema: { type: 'string' },

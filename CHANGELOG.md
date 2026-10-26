@@ -1,3 +1,38 @@
+## [1.1.0] - 2026-10-26
+
+L0 广筛物性增强 + 变频/IP67 建模 + 杠杆审计。全部新能力默认 OFF（env 亦可开），向后兼容零回归；
+既有经验回传 / 遥测 / 双通道激活链路未改动。
+
+### Added（P0 必须移植）
+- **齿宽轴 `tw_axis`**：新增 `tw_axis` / `tw_axis_targets` / `tw_axis_factors` 参数，每行在派生齿宽之外
+  追加剧宽档（按各行极数分档 Bg 反解），使齿磁密 Bt 可覆盖 EM0103 带宽 [1.4,1.7]T —— 默认池
+  Bt 恒 ≈0.72~0.81T，达标设计原不可检索。
+- **转矩包络**：删除旧 `estTorque` 线性类比（D²L 比例误差 max 523%），改用
+  `computeTorqueD2L` / `deriveTorqueEnvelope` 物理包络，输出 `torque_feasibility`
+  （ample / overload_only / undersized / unknown）。
+
+### Added（P1 建议移植）
+- **可配置极数**：`pole_span` / `pole_candidates` / `poles_strict` + `POLE_CANDIDATES` 透明告警。
+- **`undersized` 过滤**：`filter_undersized`（env `DSH_L0_FILTER_UNDERSIZED` 默认 OFF，零回归）
+  + `UNDERSIZED_FILTERED` 告警。
+- **统一 `count` 默认 20→1000**：与 `dsh-motor-ai-l0` 对齐（`pipeline` / `param_matrix` 同步）。
+
+### Added（P2 按需移植）
+- **变频驱动建模 `vfd`（M1~M7）**：`tools/l0/vfd-ip67-model.mjs` 后处理层，默认 OFF。计算谐波损耗系数
+  k_h、附加温升、低速冷却衰减、效率重推、k_h 灵敏度扫描、四项降损措施评估；M4~M7（绝缘 dv/dt /
+  轴承电蚀 / EMC / 控制适配）仅透传声明值 + 阈值判定 + 溯源标记，**绝不编造数值**。结果行新增
+  `vfd_model` / `*_vfd` 字段，不覆写既有正弦口径温升/损耗/效率。
+- **IP67 结构技术点 `ip67`（S1~S8）**：声明式登记 + 可喂入项抽取（IEC 60034-5 / GB/T 4942.1），
+  结果行新增 `ip67_model`。
+- **杠杆审计 `leverage_log` + 三原语**：`design-validate` 新增 `leverage_audit`（精确反解 headroom）、
+  `sweep`、`solve_turns`、`leverage_kb`；`pipeline` 新增 `leverage_log` 聚合（V07/V08/V15 可调余量
+  分布 + Top1 精确反解）。新增 `lib/leverage-knowledge.mjs` 杠杆知识库（纯数据，零依赖）。
+
+### Verified
+- `scripts/verify.mjs` 全量门禁通过（15 工具注册、YAML 无重复键、defineTool output schema 防线）。
+- 功能探针实证：vfd/ip67/`leverage_log`/`leverage_audit` 四大能力均生效，默认 OFF 时
+  `vfd` / `ip67` / `leverage_log` 为 `null`、结果行无 `vfd_model`（零回归）。
+
 ## [1.0.0] - 2026-10-24
 
 首个正式版。核心变化：在线知识库从「只采集」升级为「采集—晋升—利用」完整闭环，

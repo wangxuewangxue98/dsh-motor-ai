@@ -51,7 +51,7 @@ try {
 
   const checks = [
     ['name', 'dsh-motor-ai'],
-    ['version', /^1\.0\.0/],
+    ['version', /^1\.1\.0/],
     ['description', /完整版|L1|L2|RMxprt|Motor-CAD/i],
   ]
 
