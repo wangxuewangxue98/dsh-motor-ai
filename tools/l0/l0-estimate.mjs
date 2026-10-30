@@ -78,6 +78,19 @@ export const TOOL_PARAMS = {
       + '默认 false（env DSH_L0_SLOT_TW 亦可开）。行内新增 slot_tooth_width_mm / slot_area_mm2 / '
       + 'slot_tw_caliber(explicit|derived_resolved|legacy_derived) 三字段可核查。',
   },
+  tooth_peak_gate: {
+    type: 'boolean',
+    description: 'v1.2.4 P0-8（需 core ≥1.5.4）：齿部峰值磁密饱和门禁。'
+      + 'L0 既有 Bt 是**平均口径**，而 V08 判定带 [1.4,1.7]T / 饱和限 1.9T 是**峰值口径**，'
+      + '直接比会假达标。开启后（默认 ON）以 peak=Bt_mean×π/2 与 RMxprt 6 点同源作饱和判定，'
+      + '并在 issues 回吐 V07-peak 告警（仅告警、不强行否决，与历史目标偏离判定并存）。',
+  },
+  back_emf_drop: {
+    type: 'number',
+    description: 'v1.2.4 P0-8（需 core ≥1.5.4）：匝数模型反电动势压降系数 k_E=E/Uph。'
+      + 'L0 既有 turns_ideal 按 E=Uph 算（漏抗压降被忽略）⇒ 匝数系统性偏多。默认 1.0（零回归）；'
+      + '实测 RMxprt 300kW E/Uph≈0.86~0.88 ⇒ 设 0.88 后 turns_ideal 更贴近真机。仅回吐 turns_per_coil_ideal_at_load，不强行否决。',
+  },
 }
 
 /** 允许参与排序的字段白名单（防注入 sort 到任意键） */
@@ -182,6 +195,12 @@ export function runL0Estimate(rawArgs, config = {}) {
     // args.slot_tw（true/'true'）⇒ opts 通道；env DSH_L0_SLOT_TW 由 core 直读（双通道各管各的）。
     // 本工厂是 5 处 quickL0Estimate 调用的唯一收敛点 ⇒ 改一处全量生效。
     ...((args.slot_tw === true || args.slot_tw === 'true') ? { slotTw: true } : {}),
+    // v1.2.4 P0-8：齿部峰值门禁（默认 ON；false 显式关）。core 1.5.4 toothPeakGate 默认开启，
+    // 此处仅在用户显式关时才传 false，否则不传（让 core 走默认 ON）。
+    ...(args.tooth_peak_gate === false || args.tooth_peak_gate === 'false' ? { toothPeakGate: false } : {}),
+    // v1.2.4 P0-8：匝数反标 k_E。合法区间 (0,1] 才透传；其余（含默认 1.0）不传，让 core 走默认 1.0。
+    ...(Number.isFinite(Number(args.back_emf_drop)) && Number(args.back_emf_drop) > 0 && Number(args.back_emf_drop) <= 1
+      ? { backEmfDrop: Number(args.back_emf_drop) } : {}),
     ...(row?.insulation_class ? { insulationClass: String(row.insulation_class).toUpperCase() } : {}),
     ...(Number.isFinite(Number(row?.line_freq_hz)) ? { lineFreqHz: Number(row.line_freq_hz) } : {}),
     ...(!row?.insulation_class && config.insulationClass

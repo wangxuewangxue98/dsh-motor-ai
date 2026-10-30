@@ -98,6 +98,15 @@ export const TOOL_PARAMS = {
       + '与 Bt 公式同源同值，消除双齿宽解耦 Artifact。默认 false（env DSH_L0_SLOT_TW 亦可开）。'
       + '⚠ 与 tw_axis 组合才有意义（tw_axis 产出显式齿宽 ⇒ slot_tw 让槽几何吃同一齿宽）。',
   },
+  tooth_peak_gate: {
+    type: 'boolean',
+    description: 'v1.2.4 P0-8（需 core ≥1.5.4）：齿部峰值磁密饱和门禁（默认 ON）。'
+      + 'L0 既有 Bt 平均口径与 V08 峰值判定带错配会假达标；开启后以 peak=Bt_mean×π/2 作饱和判定。',
+  },
+  back_emf_drop: {
+    type: 'number',
+    description: 'v1.2.4 P0-8（需 core ≥1.5.4）：匝数反标 k_E=E/Uph（默认 1.0 零回归，实测≈0.88）。',
+  },
 }
 
 /**
@@ -168,6 +177,9 @@ export function runL0Pipeline(rawArgs, config = {}) {
     // ⚠ 本处是**显式白名单**调用（非整包）⇒ 不在此登记则 slot_tw 到不了 L0 估算，
     // 「只在 TOOL_PARAMS 声明」是不够的（与 tw_axis 等走第 1 步整包透传的键不同）。
     ...(args.slot_tw != null ? { slot_tw: args.slot_tw } : {}),
+    // v1.2.4 P0-8：齿部峰值门禁 + 匝数反标透传（core 1.5.4）
+    ...(args.tooth_peak_gate != null ? { tooth_peak_gate: args.tooth_peak_gate } : {}),
+    ...(args.back_emf_drop != null ? { back_emf_drop: args.back_emf_drop } : {}),
   }, chainCfg)
 
   // ---- rc.16 P0-1：密度收敛自检（默认 OFF）----

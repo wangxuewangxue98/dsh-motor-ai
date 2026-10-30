@@ -1,3 +1,15 @@
+## [1.2.4] - 2026-10-31
+
+同步精简版 l0 0.6.10 的 P0-8 磁密口径统一能力（core 1.5.4）：
+- 新增 `tooth_peak_gate`（默认 ON）：齿磁密峰值口径门禁。L0 既有 Bt 为极内平均口径，
+  与 V08 饱和限/RMxprt 峰值口径差 π/2≈1.571 ⇒ 窄齿方案会假达标（300kW 实证：平均 1.61T⇒峰值 2.53T，超带 49%）。
+  开启后以 peak=Bt_mean×π/2 作饱和判定并在 issues 回吐 V07-peak 告警（仅告警、不强行否决）。
+- 新增 `back_emf_drop`（默认 1.0 零回归）：匝数反标 k_E=E/Uph。turns_ideal 按 E=Uph 反解忽略漏抗压降 ⇒ 匝数偏多；
+  设 0.88 后 turns_ideal 更贴近 RMxprt 实测（E/Uph≈0.86~0.88）。仅回显 turns_ideal_at_load，不改写 turnsIdeal。
+- 三处接线（l0-estimate / pipeline / design-validate 的 probeRow 就地注入 + solve_turns 回显）按 l0 0.6.10 同源移植。
+- 依赖收紧：`@wangxue98/dsh-motor-ai-core` `^1.5.3` → `^1.5.4`。
+- 诚实边界：绝对出力判据不与 2 匝强耦合（缺 ≥30 台大机真值），k_E 仅解释匝数偏差的一部分，绝对可行须 L1 实跑。
+
 ## [1.2.3] - 2026-10-30
 
 与精简版 l0 0.6.9 口径对齐 + 修一个真 bug（VFD 排序方向颠倒）。

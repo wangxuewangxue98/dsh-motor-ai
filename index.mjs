@@ -276,6 +276,18 @@ const CONFIG_SCHEMA = {
       default: 0.8,
       description: '气隙磁密基准（T）',
     },
+    // v1.2.4 P0-8（core ≥1.5.4）：design-validate 消费的两个插件级开关。
+    // toothPeakGate 默认 undefined ⇒ core 走默认 ON；backEmfDrop 默认 undefined ⇒ core 走 1.0（零回归）。
+    toothPeakGate: {
+      type: 'boolean',
+      default: undefined,
+      description: '齿磁密峰值口径门禁（默认 ON=undefined 交 core 默认；显式 false 关闭 V07 峰值告警）',
+    },
+    backEmfDrop: {
+      type: 'number',
+      default: undefined,
+      description: '反电动势压降系数 k_E=E/Uph（默认 undefined=1.0 零回归；RMxprt 实测≈0.88）',
+    },
     insulationClass: {
       type: 'string',
       default: 'F',
