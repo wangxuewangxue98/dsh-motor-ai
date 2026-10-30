@@ -24,6 +24,7 @@ import { registerEnvCheck, ENV_CHECK_TOOL_NAME } from './tools/env-check.mjs'
 import { registerEnvBootstrap, ENV_BOOTSTRAP_TOOL_NAME } from './tools/env-bootstrap.mjs'
 import { registerReportIssue, REPORT_ISSUE_TOOL_NAME } from './tools/report-issue.mjs'
 import { registerFaultAssist, FAULT_ASSIST_TOOL_NAME } from './tools/fault-assist.mjs'
+import { registerExperienceFeedbackTool, EXPERIENCE_FEEDBACK_TOOL_NAME } from './tools/experience-feedback-tool.mjs'
 
 // L1/L2 占位工具注册器（后续实现）
 import { registerL1Placeholders } from './tools/l1/index.mjs'
@@ -49,6 +50,8 @@ export const ALL_TOOL_NAMES = [
   'submit_resolved_case',
   // 故障协助（在线经验智能支持：脱敏故障上报 + 相似案例匹配，Part 二完整版）
   FAULT_ASSIST_TOOL_NAME,
+  // 文字经验反馈（贡献型、不占配额——经验/踩坑/建议回流，策展后进知识库，P0-B/P1）
+  EXPERIENCE_FEEDBACK_TOOL_NAME,
   // L1 占位（待实现后替换为真工具）
   'motor_l1_estimate',
   'motor_l1_pipeline',
@@ -119,6 +122,11 @@ export async function registerAll(ctx, config = {}) {
   // 故障协助工具始终注册（免费、不占配额、无授权要求——报错路径的在线经验支持触点）
   await registerFaultAssist(ctx, config)
   registered.push(FAULT_ASSIST_TOOL_NAME)
+
+  // 文字经验反馈工具始终注册（免费、不占配额、无授权要求——贡献型经验回流触点；
+  // 外发受 experienceFeedbackEnabled opt-in 门控，默认关）
+  await registerExperienceFeedbackTool(ctx, config)
+  registered.push(EXPERIENCE_FEEDBACK_TOOL_NAME)
 
   // L1 始终注册（工具恒存在）；调用时按许可证门控——
   // 无码/过期/无效 → 返回 LICENSE_REQUIRED 引导，L0 不受影响（落实引流触点 2）
@@ -387,6 +395,21 @@ const CONFIG_SCHEMA = {
       type: 'string',
       default: '',
       description: '相似案例查询目标 URL；空 = 自动回退 commerceBackendUrl + /api/dsh/issue-resolved/query；二者都空 = 仅提示不查询',
+    },
+    // ---- 文字经验反馈（经验反馈渠道 P0-B/P1；贡献型、不占配额，opt-in 默认关闭）----
+    // 用户/AI 会话总结「踩坑经验 / 改进建议 / 能力缺口」后经 motor_submit_experience 发回
+    // 接收端（/api/dsh/experience-feedback），策展后进 ['kb'] 供 design-assist 注入。
+    // 四道脱敏闸：白名单裁剪 + 黑名单键即拒 + S01~S10 内容级扫描 + rec_id 内容 sha1。
+    // 与 issueResolvedEnabled 分工：iss=问题→根因→解决；fbk=经验/建议/缺口。
+    experienceFeedbackEnabled: {
+      type: 'boolean',
+      default: false,
+      description: '文字经验反馈总开关（默认关，opt-in；文字反馈比数值样本更易夹带上下文，需用户明示授权）',
+    },
+    experienceFeedbackEndpoint: {
+      type: 'string',
+      default: '',
+      description: '经验反馈目标 URL；空 = 自动回退 commerceBackendUrl + /api/dsh/experience-feedback；二者都空 = 不启用',
     },
     // ---- 在线知识库入口（P1-C；为空 = 所有文案不带链接）----
     knowledgeBaseUrl: {

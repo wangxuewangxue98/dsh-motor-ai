@@ -1,3 +1,34 @@
+## [1.2.0] - 2026-10-30
+
+经验反馈渠道：新增「文字经验 / 踩坑 / 改进建议」回流通道（贡献型工具 + 接收端独立端点）。
+贡献型工具不消耗额度；通道 **opt-in 默认关**，向后兼容零回归。
+
+### Added
+- **贡献型工具 `motor_submit_experience`**：用户/AI 会话总结「现象→原因→该怎么做」类通用经验后
+  主动提交，接收端落 `['fbk']`，维护者策展晋升 `['kb']` 后由 design-assist 自动注入后续设计
+  （用 → 悟 → 传 → 用闭环）。与 `submit_resolved_case` 显式分工：iss=问题→根因→解决（故障向），
+  fbk=经验/建议/缺口（知识向），防重复回流。
+- **四道脱敏闸**：① FEEDBACK_FIELDS 白名单裁剪；② 身份类黑名单键命中即拒（与接收端同款）；
+  ③ **S01~S10 内容级正则扫描**（移植 case-feedback.mjs，命中即拒——自由文本是键名白名单
+  管不住的泄漏面）；④ rec_id 内容 sha1 前 12 位（审计可溯、重试可去重）。
+- **配置键** `experienceFeedbackEnabled`（默认 **false**，opt-in——文字反馈比数值样本更易
+  夹带上下文，比 design_exp 的 opt-out 更保守）/ `experienceFeedbackEndpoint`（空 = 回退
+  commerceBackendUrl + /api/dsh/experience-feedback）。
+- **接收端配套**（独立部署，dsh-motor-ai-receiver-deno `570e2f3`）：`POST
+  /api/dsh/experience-feedback`（kind 硬校验 `l0-experience-feedback`、白名单/黑名单/≤32KB、
+  落 `['fbk', ts, uuid]` append-only）；`/api/dsh/stats` 增 experience_feedback 段；
+  `/api/dsh/export` 事件流增 fbk 前缀（自托管副本可拉取）。
+
+### Verified
+- `scripts/verify.mjs` 全量门禁通过（19 工具文件 schema 防线、CONFIG_SCHEMA 声明覆盖含
+  experience-feedback、YAML 无重复键、双通道激活、免费额度闸门）。
+- 通道单元测试 `tests/experience-feedback.test.mjs` 16/16：白名单裁剪 / rec_id 幂等 /
+  opt-in 门 / 端点解析 / S01·S05·S06·S07·S10 内容级拒收 / 黑名单键 / 必填 / HTTP 失败
+  不抛 / 工具层 skipped·submitted·脱敏指引。
+- 接收端端点本地 + 生产 e2e 6/6：bad_kind / ok / forbidden_field / missing_rec_id /
+  empty_content / stats 计数。
+- 默认配置（experienceFeedbackEnabled=false）下工具可注册、调用仅返回开启指引，零网络行为。
+
 ## [1.1.0] - 2026-10-26
 
 L0 广筛物性增强 + 变频/IP67 建模 + 杠杆审计。全部新能力默认 OFF（env 亦可开），向后兼容零回归；

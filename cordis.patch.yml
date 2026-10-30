@@ -78,6 +78,13 @@
         faultAssistEnabled: true          # 故障协助总开关（boolean）；默认开启（opt-out 置 false）
         faultReportEndpoint: ''           # 脱敏故障上报 URL；空 = 回退 commerceBackendUrl + /api/dsh/fault-report
         issueQueryEndpoint: ''            # 相似案例查询 URL；空 = 回退 commerceBackendUrl + /api/dsh/issue-resolved/query
+        # ---- 文字经验反馈（经验反馈渠道 P0-B/P1，2026-10-30；opt-in 默认关）----
+        # 用户/AI 会话总结「踩坑经验/改进建议/能力缺口」后经 motor_submit_experience 工具发回，
+        # 接收端落 ['fbk']，策展后进 ['kb'] 供 design-assist 注入。四道脱敏闸（白名单 +
+        # 黑名单键即拒 + S01~S10 内容级扫描 + rec_id 内容 sha1）。与 issueResolvedEnabled 分工：
+        # iss=问题→根因→解决（故障向）；fbk=经验/建议/缺口（知识向）。
+        experienceFeedbackEnabled: false  # 总开关（boolean）；默认关闭（opt-in，需用户明示授权）
+        experienceFeedbackEndpoint: ''    # 目标 URL；为空则回退 commerceBackendUrl + /api/dsh/experience-feedback
         # ---- 在线知识库入口（P1-C；为空 = 文案不带链接）----
         knowledgeBaseUrl: 'https://workbuddy.link/p/xWcD0qQyCUoGVl98S2LHei'  # 在线知识库公开入口（导航页）；空 = 文案不带链接（与 index.mjs 默认值保持一致，勿加 www）
         # ---- 设计经验自动注入（design-assist，2026-10-23）----
