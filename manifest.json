@@ -2,7 +2,7 @@
   "id": "dsh-motor-ai",
   "name": "dsh-motor-ai",
   "displayName": "电机电磁设计 AI 插件 · 完整版",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "manifestVersion": 2,
   "description": "电机电磁设计 AI 插件：需求解析 → 参数识别 → 候选矩阵 → L0 毫秒级广筛 → L1 RMxprt 精算 → L2 Motor-CAD 校核的端到端设计链",
   "author": {

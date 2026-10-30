@@ -92,6 +92,7 @@
         docUploadEnabled: false           # 总开关（boolean）；默认关闭（opt-in，需用户明示授权）
         docUploadEndpoint: ''             # 目标 URL；为空则回退 commerceBackendUrl + /api/dsh/doc-upload
         docUploadToken: ''                # 上传令牌（可选）；空=开放档 ≤32 块（≈1.1MB）；配置后解锁 512 块
+        openChannelSecret: ''             # 开放通道轻量共享密钥（v1.2.2，可选）；空=用烘焙默认；接收端设 OPEN_CHANNEL_SECRET 同值后闸门生效
         # ---- 在线知识库入口（P1-C；为空 = 文案不带链接）----
         knowledgeBaseUrl: 'https://workbuddy.link/p/xWcD0qQyCUoGVl98S2LHei'  # 在线知识库公开入口（导航页）；空 = 文案不带链接（与 index.mjs 默认值保持一致，勿加 www）
         # ---- 设计经验自动注入（design-assist，2026-10-23）----

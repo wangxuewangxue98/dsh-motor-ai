@@ -436,6 +436,11 @@ const CONFIG_SCHEMA = {
       default: '',
       description: '上传令牌（可选）；空 = 走接收端开放档（单文档 ≤32 块 ≈1.1MB）；配置后解锁 512 块（≈18MB）',
     },
+    openChannelSecret: {
+      type: 'string',
+      default: '',
+      description: '开放通道轻量共享密钥（v1.2.2，可选）；覆盖烘焙默认值（lib/open-channel-secret.mjs）。接收端设 OPEN_CHANNEL_SECRET 同值后，doc 开放档 + fbk 经验反馈通道即要求 ?token= 相等（挡匿名滥用）；留空 = 用烘焙默认（零联系自主回传不受影响）',
+    },
     // ---- 在线知识库入口（P1-C；为空 = 所有文案不带链接）----
     knowledgeBaseUrl: {
       type: 'string',

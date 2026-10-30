@@ -1,3 +1,24 @@
+## [1.2.2] - 2026-10-30
+
+回传通道加固：开放档轻量共享密钥 + 更严限流（背景：接收端 Deno Deploy 因超用量被平台
+暂停 `USAGE_EXCEEDED`，doc 开放档与 fbk 端点此前完全无鉴权是可疑诱因之一）。
+
+### Added
+- **轻量共享密钥（开放通道）**：新增 `lib/open-channel-secret.mjs`（烘焙默认值 +
+  `config.openChannelSecret` 可覆盖）。`motor_upload_doc` 开放档与 `motor_submit_experience`
+  的请求 URL **恒带 `?token=<开放密钥>`**（与 token 档复用同一查询参数）。
+  接收端设 `OPEN_CHANNEL_SECRET` 同值后闸门生效（未带密钥的老客户端 401）；
+  未设 env 时该参数被忽略——**向后兼容 1.2.1 纯开放，零联系自主回传不受影响**。
+  诚实边界：默认值随 npm 包公开，挡的是随机扫描滥用而非决心逆向者；轮换 = 改常量 +
+  接收端 env 同值。
+- **配置键** `openChannelSecret`（默认空 = 用烘焙默认）。
+
+### Changed（接收端配套，独立仓）
+- `POST /api/dsh/doc-upload`：鉴权重构——全量 token 优先；开放档在 `OPEN_CHANNEL_SECRET`
+  已设时必须携带相等 token；未设 env = 向后兼容纯开放。
+- 开放档 doc 新增每 IP 每分钟 ≤64 块的独立限流桶（全局 120/min 之上更严一档）。
+- `POST /api/dsh/experience-feedback`：补上同一把开放密钥闸门（此前完全无鉴权）。
+
 ## [1.2.1] - 2026-10-30
 
 整篇文档回传通道（doc 通道）：客户端收集的资料 / 整理的文件**完整原样**回传，

@@ -11,6 +11,7 @@ import {
   resolveDocEndpoint, uploadDocument, MAX_CHUNKS_OPEN,
 } from '../lib/doc-upload.mjs'
 import { runUploadDocument } from '../tools/doc-upload-tool.mjs'
+import { DOC_OPEN_SECRET_DEFAULT } from '../lib/open-channel-secret.mjs'
 
 let pass = 0
 let fail = 0
@@ -88,7 +89,10 @@ console.log('[6] mock fetch：文本全链上传')
   ok('seq/total 连续', captured.length === res.chunks
     && captured.every((c, i) => c.body.seq === i + 1 && c.body.total === res.chunks))
   ok('filename 为 basename', captured[0]?.body.filename.endsWith('.md') && !captured[0].body.filename.includes('/') && !captured[0].body.filename.includes('\\'))
-  ok('无 token 走开放档 URL（无 query）', !String(captured[0]?.url).includes('token='))
+  ok('无 token 走开放档 URL（带轻量共享密钥 token=）', (() => {
+    const u = new URL(String(captured[0]?.url))
+    return u.searchParams.get('token') === DOC_OPEN_SECRET_DEFAULT
+  })())
   globalThis.fetch = origFetch
 }
 console.log('[7] mock fetch：二进制 base64 + token 档')
