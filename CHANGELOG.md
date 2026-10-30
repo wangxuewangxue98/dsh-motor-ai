@@ -1,3 +1,66 @@
+## [1.2.3] - 2026-10-30
+
+与精简版 l0 0.6.9 口径对齐 + 修一个真 bug（VFD 排序方向颠倒）。
+背景：完整版与 l0 同源分叉，l0 已发布 P0-7（core 1.5.3 单一齿宽口径），
+**本仓此前未同步**（`grep slot_tw` 零命中）；同时排查发现排序方向缺陷。
+
+### Fixed（真 bug）
+- **VFD 排序方向颠倒**：`sort_by='temp_rise_vfd'` 此前已在排序白名单里，却不在升序集合
+  （`ASCENDING_FIELDS` 只有 `temp_rise/total_loss`）⇒ 按**降序**排，温升越高越靠前，
+  与正弦口径 `temp_rise` 方向相反。修复：升序集合补 `temp_rise_vfd` / `total_loss_vfd`。
+  反向破坏实证：拆掉后运行时序列由升序 `[128.1 → 168.7 → 215.9]` 翻为降序 `[215.9 → 168.7 → 128.1]`。
+- **白名单缺项**：`total_loss_vfd` / `efficiency_vfd_raw` 已由 `applyVfdIp67Models` 注入
+  （`l0-estimate.mjs:128-129`）却未登记 ⇒ 传这两个 `sort_by` 被静默拒绝。本次补齐。
+
+### Added（P0-7 单一齿宽口径，需 core ≥1.5.3）
+- **参数 `slot_tw`**（默认 `false`，`env DSH_L0_SLOT_TW` 亦可开）：槽几何消费
+  `row.tooth_width`，与 Bt 公式同源同值，消除「Bt 用 4.39 / fill 用派生 8.77」的
+  **双齿宽解耦 Artifact**（300kW 方案实证：齿统一 8.77 ⇒ Bt=0.807T 挂；统一 4.39 ⇒ fill=0.330 挂）。
+- **三处接线**：`l0-estimate`（`estimateOpts` 唯一收敛点，5 处调用全量生效）、
+  `pipeline`（**显式白名单**调用必须登记，否则到不了估算）、
+  `design-validate`（`probeRow` 内 `quickL0Estimate` 就地构造 opts，外层 opts 不继承）。
+- **输出回显**：行内新增 `slot_tooth_width_mm` / `slot_area_mm2` /
+  `slot_tw_caliber`（`explicit` | `derived_resolved` | `legacy_derived`）三字段可核查。
+
+### Added（可发现性补齐）
+- `pipeline` TOOL_PARAMS 补 7 键：`tw_axis` / `tw_axis_targets` / `tw_axis_factors` /
+  `pole_span` / `pole_candidates` / `poles_strict` / `filter_undersized`。
+  ⚠ 诚实说明：这些键的能力**早已实现**（`param-matrix` 有，且第 1 步 `buildParamMatrix(args)`
+  是整包透传 ⇒ 此前不声明也能生效），本次只补声明让宿主可发现、可传参，**零逻辑改动**。
+  **反例**：`mc_samples` / `mc_ci_level` **未补** —— 本仓 `l0-estimate` 无 `monteCarloRow` 实现，
+  声明了就是「传了不生效」的虚假承诺。
+
+### Changed
+- **core 依赖 `^1.4.0` → `^1.5.3`**：1.4.0 无 `slotTwOn`，声明过宽会让旧解析静默失效
+  （符号层面 1.4.0 不缺 import，但语义缺 P0-7 能力）。
+- **`npm test` 改成真能跑**：原 `test` 脚本直接调 jest，但本仓 13 个 `tests/*.test.mjs`
+  是**脚本式门禁**（自带 console 汇总 + 失败 `process.exit(1)`），非 jest 风格
+  ⇒ jest 跑必崩（worker 遇 process.exit："4 child process exceptions"，13 suites 全 failed、0 tests）。
+  改为 `scripts/run_unit_tests.mjs`（逐个独立进程 spawn + 汇总），**不改造任何测试文件**。
+  原 jest 入口保留为 `npm run test:jest`（加 `--passWithNoTests`，供将来接入 jest 风格用例）。
+
+### Verified
+- 新门禁 `scripts/verify_slot_tw.mjs` **28/28**（§1 静态锚点 / §2 args 通道 / §3 env 双通道 /
+  §4 单一齿宽闭环 / §5 design-validate / §6 VFD 排序方向运行时实证 / §7 pipeline 端到端 + 对照组）。
+- **反向破坏四场景独立变红 + 恢复回绿**（每个场景 patch → 跑 → 立即恢复，防累积污染）：
+  拆透传 8 红 / 拆 pipeline 白名单 2 红 / 拆 ASCENDING 2 红 / 拆 design-validate 接线 1 红。
+- `npm run verify`（主门禁）全绿；新门禁 28/28。
+- 单元测试：13 个文件 **9 绿 / 4 红**（`env-probe`、`experience-channel`、
+  `free-quota-offline`、`motorcad-com-bridge`）。
+  ⚠ **已用 `git stash` 做 HEAD 对照**：这 4 个在**无本次改动**时同样失败且退出码逐位相同
+  （1 / 127 / 1 / 1）⇒ **既有环境依赖**（网络 / 本地后端 / pywin32+Motor-CAD），与 1.2.3 无关。
+
+### 诚实边界（未做/做不到）
+- `slot_tw` **不改变铜损**：core 实测 ON/OFF 的 `copper_loss` 恒为 12497.3W、
+  `total_loss` 恒为 22722.4W —— 铜损由电流与已定绕组电阻决定，槽面积只影响「装不装得下」（fill）。
+  开启后出「Bt 达标但 fill 欠满」是**真实几何冲突**，不是工具口径问题。
+- `design-validate` 的 `slot_tw` 只对 `sweep` / `solve_turns` 两个杠杆原语生效
+  （single 模式只调 `validateDesign`，**不走 `probeRow`**），且 core `validateDesign`
+  不回吐槽几何字段 ⇒ 该通道**当前无运行时可观测差异面**，门禁只守「接线存在 + 零回归」。
+- `winding_lock` / `eng_slot_fill` / `bg_bins` 的 opts 通道**两仓都未做**（仅 env 可用），
+  非本次范围；MC/CI、杠杆对比 `baseline_params`、analytic 通道属 l0 独有，本仓未移植
+  （analytic 模块 l0 自注「未标定」，不建议贸然搬运）。
+
 ## [1.2.2] - 2026-10-30
 
 回传通道加固：开放档轻量共享密钥 + 更严限流（背景：接收端 Deno Deploy 因超用量被平台

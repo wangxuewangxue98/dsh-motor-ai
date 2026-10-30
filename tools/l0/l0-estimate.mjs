@@ -71,13 +71,29 @@ export const TOOL_PARAMS = {
     type: 'boolean',
     description: 'v0.6.8 P2：仅 vfd 开启时生效。评估四项降损措施（滤波器/独立风机/加大机座/低损耗硅钢）各自的降温效果与达标性。',
   },
+  slot_tw: {
+    type: 'boolean',
+    description: 'v1.2.3 P0-7（需 core ≥1.5.3）：单一齿宽口径——槽几何消费 row.tooth_width，'
+      + '与 Bt 公式同源同值，消除「Bt 用 tw_axis 值 4.39 / fill 用派生值 8.77」的双齿宽解耦 Artifact。'
+      + '默认 false（env DSH_L0_SLOT_TW 亦可开）。行内新增 slot_tooth_width_mm / slot_area_mm2 / '
+      + 'slot_tw_caliber(explicit|derived_resolved|legacy_derived) 三字段可核查。',
+  },
 }
 
 /** 允许参与排序的字段白名单（防注入 sort 到任意键） */
-export const SORTABLE_FIELDS = ['efficiency', 'efficiency_raw', 'torque_density', 'temp_rise', 'temp_rise_vfd', 'total_loss', 'power']
+export const SORTABLE_FIELDS = ['efficiency', 'efficiency_raw', 'torque_density', 'temp_rise', 'total_loss', 'power',
+  // v0.6.8 P2：变频修正口径（仅 vfd 开启时行内才有值；未开启时恒 null ⇒ sortKey 回落 0，行为不变）
+  // v1.2.3 补齐：total_loss_vfd / efficiency_vfd_raw 已由 applyVfdIp67Models 注入（:128-129），
+  // 此前未登记 ⇒ 传这两个 sort_by 会被静默拒绝。
+  'temp_rise_vfd', 'total_loss_vfd', 'efficiency_vfd_raw']
 
-/** temp_rise 为「越小越好」，其余为「越大越好」 */
-const ASCENDING_FIELDS = new Set(['temp_rise', 'total_loss'])
+/**
+ * 「越小越好」的字段集合（升序），其余为「越大越好」（降序）
+ * v1.2.3 修复（真 bug）：此前 temp_rise_vfd 已进 SORTABLE_FIELDS 却未在此登记 ⇒
+ * sort_by='temp_rise_vfd' 按**降序**排（温升越高越靠前），方向颠倒，与正弦口径 temp_rise 相反。
+ * total_loss_vfd 同理（损耗越小越好）。
+ */
+export const ASCENDING_FIELDS = new Set(['temp_rise', 'total_loss', 'temp_rise_vfd', 'total_loss_vfd'])
 
 /**
  * 取排序键（v0.2.4）
@@ -162,6 +178,10 @@ export function runL0Estimate(rawArgs, config = {}) {
   const estimateOpts = (row) => ({
     efficiencyCap,
     maxTempClamp,
+    // P0-7（core ≥1.5.3）：单一齿宽口径——槽几何消费 row.tooth_width，消除 Bt/fill 双齿宽并存。
+    // args.slot_tw（true/'true'）⇒ opts 通道；env DSH_L0_SLOT_TW 由 core 直读（双通道各管各的）。
+    // 本工厂是 5 处 quickL0Estimate 调用的唯一收敛点 ⇒ 改一处全量生效。
+    ...((args.slot_tw === true || args.slot_tw === 'true') ? { slotTw: true } : {}),
     ...(row?.insulation_class ? { insulationClass: String(row.insulation_class).toUpperCase() } : {}),
     ...(Number.isFinite(Number(row?.line_freq_hz)) ? { lineFreqHz: Number(row.line_freq_hz) } : {}),
     ...(!row?.insulation_class && config.insulationClass

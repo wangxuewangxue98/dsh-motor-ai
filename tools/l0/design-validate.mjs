@@ -83,6 +83,12 @@ export const TOOL_PARAMS = {
     description: 'v0.5.5 P2-3 杠杆知识库查询：传 true 返回全表；传杠杆名（如 yoke_thickness/turns_per_coil/' +
       'slot_family）返回该杠杆的「影响指标/调节方向/耦合提示/关联规则 Vxx」。纯本地数据查询。',
   },
+  slot_tw: {
+    type: 'boolean',
+    description: 'v1.2.3 P0-7（需 core ≥1.5.3）：单一齿宽口径——槽几何消费 params.tooth_width，'
+      + '与 Bt 公式同源同值，消除双齿宽解耦 Artifact。默认 false（env DSH_L0_SLOT_TW 亦可开）。'
+      + '同时作用于 validateDesign 与 quickL0Estimate（单条校验口径 = 批量估算口径）。',
+  },
 }
 
 /**
@@ -106,6 +112,10 @@ function probeRow(row, opts, config = {}) {
         maxTempClamp: config.tempRiseRange ?? [45, 130],
         ...(row?.insulation_class ? { insulationClass: String(row.insulation_class).toUpperCase() } : {}),
         ...(Number.isFinite(Number(row?.line_freq_hz)) ? { lineFreqHz: Number(row.line_freq_hz) } : {}),
+        // v1.2.3 P0-7：估算侧同样吃单一齿宽口径。
+        // ⚠ 取证：本处 opts 是**就地构造**的，不继承外层 probeRow(row, opts) 的 opts
+        // ⇒ 只在外层 opts 加 slotTw 对 quickL0Estimate **完全无效**（已实测：ON/OFF 指标逐位相同）。
+        ...(opts?.slotTw ? { slotTw: true } : {}),
       })
     } catch { return null }
   })()
@@ -306,6 +316,9 @@ export function runDesignValidate(rawArgs, config = {}) {
     includeThermal: args.include_thermal === false ? false : true,
     efficiencyCap: config.efficiencyCap,
     maxTempClamp: config.tempRiseRange,
+    // v1.2.3 P0-7（core ≥1.5.3）：单一齿宽口径。与 l0-estimate/pipeline 的 slot_tw 同名同义，
+    // 使「单条校验」与「批量估算」同口径（此前两仓均未给 validateDesign 接线，属共同遗留）。
+    ...((args.slot_tw === true || args.slot_tw === 'true') ? { slotTw: true } : {}),
   }
 
   // ---- v0.5.5 P2-3 杠杆知识库查询（纯本地数据；优先级最高，一次调用=一次额度）----

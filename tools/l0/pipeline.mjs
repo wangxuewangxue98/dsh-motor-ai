@@ -80,6 +80,24 @@ export const TOOL_PARAMS = {
     description: 'v0.6.8 P2：仅 vfd 开启时生效。评估四项降损措施（滤波器/独立风机/加大机座/' +
       '低损耗硅钢）各自的降温效果与达标性。',
   },
+  // ---- v1.2.3：补齐 param-matrix 已实现但此前未在聚合层声明的键 ----
+  // ⚠ 诚实边界：这些键此前「不声明也能生效」，因为第 1 步 buildParamMatrix(args) 是**整包透传**；
+  // 但工具 schema 不声明 ⇒ 宿主/模型无法发现、无法传参。本次只补声明，不改逻辑（零回归）。
+  // 反例（未补）：mc_samples / mc_ci_level —— 本仓 l0-estimate 无 monteCarloRow 实现，
+  // 声明了会变成「传了不生效」的虚假承诺，故不补。
+  tw_axis: { type: 'boolean', description: 'v0.6.7 L2：开启 tooth_width 候选维度（按极数分档 Bg 反解齿宽档进池）。默认 false。达标率实证：OFF 0 台 → ON 150 台（actual 口径）' },
+  tw_axis_targets: { type: 'array', description: 'v0.6.7 L2：目标齿磁密 (T) 列表，默认 [1.55, 1.2]；显式给出时优先于 tw_axis_factors' },
+  tw_axis_factors: { type: 'array', description: 'v0.6.7 L2：齿宽乘子列表（相对派生齿宽）；钳 [0.5,1.0]（<0.5×派生 ⇒ RMxprt 槽形反驱出倒梯形槽，物理不可下线）' },
+  pole_span: { type: 'number', description: '极数推荐跨度：以推荐极数为中心取 ±span 个候选（默认 0 = 只取推荐极数）' },
+  pole_candidates: { type: 'array', description: '显式极数候选列表；优先级高于 pole_span' },
+  poles_strict: { type: 'boolean', description: '极数严格模式：只按 poles 入参生成，不做推荐扩展' },
+  filter_undersized: { type: 'boolean', description: '是否过滤「功率明显偏小」的设计点（默认开启）；关闭可保留小机座样本供对比' },
+  slot_tw: {
+    type: 'boolean',
+    description: 'v1.2.3 P0-7（需 core ≥1.5.3）：单一齿宽口径——槽几何消费 row.tooth_width，'
+      + '与 Bt 公式同源同值，消除双齿宽解耦 Artifact。默认 false（env DSH_L0_SLOT_TW 亦可开）。'
+      + '⚠ 与 tw_axis 组合才有意义（tw_axis 产出显式齿宽 ⇒ slot_tw 让槽几何吃同一齿宽）。',
+  },
 }
 
 /**
@@ -146,6 +164,10 @@ export function runL0Pipeline(rawArgs, config = {}) {
     ...(args.vfd != null ? { vfd: args.vfd } : {}),
     ...(args.ip67 != null ? { ip67: args.ip67 } : {}),
     ...(args.vfd_measures != null ? { vfd_measures: args.vfd_measures } : {}),
+    // v1.2.3 P0-7：单一齿宽口径透传（core 1.5.3 slotTw）。
+    // ⚠ 本处是**显式白名单**调用（非整包）⇒ 不在此登记则 slot_tw 到不了 L0 估算，
+    // 「只在 TOOL_PARAMS 声明」是不够的（与 tw_axis 等走第 1 步整包透传的键不同）。
+    ...(args.slot_tw != null ? { slot_tw: args.slot_tw } : {}),
   }, chainCfg)
 
   // ---- rc.16 P0-1：密度收敛自检（默认 OFF）----

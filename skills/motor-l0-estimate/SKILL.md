@@ -22,7 +22,7 @@ whenToUse: >
 user-invocable: true
 metadata:
   author: Motor-AI
-  version: 1.0.0-rc.22
+  version: 1.2.3
   level: l0
   tier: free
 ---
@@ -138,6 +138,19 @@ L0 的几何/磁密/反电势模型按**工频中压异步电机**标定。超�
 
 **排序口径**：默认按 `efficiency` 降序；`temp_rise` / `total_loss` 为升序
 （越小越好）。可用 `sort_by` 切换。
+
+**v1.2.3 新增开关**
+
+| 参数 | 默认 | 说明 |
+|---|---|---|
+| `slot_tw` | `false` | **P0-7 单一齿宽口径**（需 core ≥1.5.3）：槽几何消费 `row.tooth_width`，与 Bt 公式同源同值。消除「Bt 用 tw_axis 值 4.39 / fill 用派生值 8.77」的双齿宽解耦 Artifact。开启后行内新增 `slot_tooth_width_mm` / `slot_area_mm2` / `slot_tw_caliber`（`explicit` / `derived_resolved` / `legacy_derived`）三字段可核查。`env DSH_L0_SLOT_TW` 亦可开 |
+| `vfd` / `ip67` / `vfd_measures` | OFF | 变频驱动建模（M1~M7）与 IP67 结构点（S1~S8）；仅新增 `*_vfd` 字段，**不覆写**正弦口径的温升/损耗/效率 |
+| `sort_by='temp_rise_vfd'` | — | 变频修正温升排序（**v1.2.3 修复**：此前该字段可排序却按降序，方向颠倒；现为升序 = 越小越好） |
+
+> ⚠️ 诚实边界：`slot_tw` 只改变槽几何口径（槽面积与槽满率），**不改变铜损**
+> （core 实测 copper_loss 恒为 12497.3W）——铜损由电流与已定绕组电阻决定，
+> 槽满率是「装不装得下」的可行性量，不是损耗驱动量。开启后若出线「Bt 达标但 fill 欠满」，
+> 那是**真实几何冲突**（齿宽与槽形在同一张冲片上互斥），不是工具口径问题。
 
 > 公式与系数来源详见 `references/formula-reference.md`。
 
