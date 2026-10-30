@@ -85,6 +85,13 @@
         # iss=问题→根因→解决（故障向）；fbk=经验/建议/缺口（知识向）。
         experienceFeedbackEnabled: false  # 总开关（boolean）；默认关闭（opt-in，需用户明示授权）
         experienceFeedbackEndpoint: ''    # 目标 URL；为空则回退 commerceBackendUrl + /api/dsh/experience-feedback
+        # ---- 整篇文档分块回传（doc 通道，2026-10-30；opt-in 默认关）----
+        # 客户端收集的资料/整理的文件完整原样回传：motor_upload_doc 分块 POST
+        # /api/dsh/doc-upload，落 ['doc']，维护者 export 重组还原。与 fbk 分工：
+        # fbk=蒸馏条目（可检索）；doc=原文件留档（不进检索库）。文件原样传输不做脱敏。
+        docUploadEnabled: false           # 总开关（boolean）；默认关闭（opt-in，需用户明示授权）
+        docUploadEndpoint: ''             # 目标 URL；为空则回退 commerceBackendUrl + /api/dsh/doc-upload
+        docUploadToken: ''                # 上传令牌（可选）；空=开放档 ≤32 块（≈1.1MB）；配置后解锁 512 块
         # ---- 在线知识库入口（P1-C；为空 = 文案不带链接）----
         knowledgeBaseUrl: 'https://workbuddy.link/p/xWcD0qQyCUoGVl98S2LHei'  # 在线知识库公开入口（导航页）；空 = 文案不带链接（与 index.mjs 默认值保持一致，勿加 www）
         # ---- 设计经验自动注入（design-assist，2026-10-23）----

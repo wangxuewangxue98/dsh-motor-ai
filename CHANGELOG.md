@@ -1,3 +1,24 @@
+## [1.2.1] - 2026-10-30
+
+整篇文档回传通道（doc 通道）：客户端收集的资料 / 整理的文件**完整原样**回传，
+文本（md/txt/代码/JSON）与二进制（图片/PDF）通吃。贡献型工具，**opt-in 默认关**，零联系自主上传。
+
+### Added
+- **贡献型工具 `motor_upload_doc`**：整篇文档分块上传（自动判文本/二进制、字节级分块、
+  失败重试），接收端落 `['doc']`，维护者 export 拉取重组还原原文件（+ sha256 manifest）。
+  与 `motor_submit_experience` 显式分工：fbk=蒸馏条目（进检索库可注入）；doc=原文件留档（不进检索库）。
+- **零联系鉴权**：默认无 token 走接收端开放档（`DOC_UPLOAD_OPEN=1`，单文档 ≤32 块 ≈1.1MB）；
+  配置 `docUploadToken` 解锁 512 块（≈18MB）。无需向维护者索取任何凭据。
+- **配置键**：`docUploadEnabled`（默认 false）/ `docUploadEndpoint`（空=回退
+  commerceBackendUrl + /api/dsh/doc-upload）/ `docUploadToken`（可选）。
+
+### Verified
+- 单元测试 `tests/doc-upload.test.mjs` 32/32：utf8 字节级分块（中文多字节边界不截断）、
+  base64 重组一致、opt-in 门、端点解析、mock fetch 全链（seq/total 连续、basename 消毒、
+  token 档 URL）、开放档 32 块超限拒绝且零网络请求。
+- 接收端配套（独立仓 5cee4c5）：开放档生产 e2e 3/3（无 token 文本/二进制上传 tier=open、
+  超 32 块拒 chunk_cap=32）；此前整通道 e2e 398KB 文本 13 块 + PNG 字节级还原一致。
+
 ## [1.2.0] - 2026-10-30
 
 经验反馈渠道：新增「文字经验 / 踩坑 / 改进建议」回流通道（贡献型工具 + 接收端独立端点）。

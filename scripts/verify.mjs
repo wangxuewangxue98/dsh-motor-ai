@@ -51,7 +51,7 @@ try {
 
   const checks = [
     ['name', 'dsh-motor-ai'],
-    ['version', /^1\.2\.0/],
+    ['version', /^1\.2\.1/],
     ['description', /完整版|L1|L2|RMxprt|Motor-CAD/i],
   ]
 
@@ -654,7 +654,7 @@ try {
           'index.mjs',
           'lib/quota.mjs', 'lib/license.mjs', 'lib/telemetry.mjs',
           'lib/usage-log.mjs', 'lib/experience-upload.mjs', 'lib/regression-gate.mjs',
-          'lib/experience-feedback.mjs',
+          'lib/experience-feedback.mjs', 'lib/doc-upload.mjs',
           'lib/surrogate-engine.mjs', 'lib/formula-engine.mjs',
           'lib/env-probe.mjs',
           'tools/env-check.mjs',

@@ -25,6 +25,7 @@ import { registerEnvBootstrap, ENV_BOOTSTRAP_TOOL_NAME } from './tools/env-boots
 import { registerReportIssue, REPORT_ISSUE_TOOL_NAME } from './tools/report-issue.mjs'
 import { registerFaultAssist, FAULT_ASSIST_TOOL_NAME } from './tools/fault-assist.mjs'
 import { registerExperienceFeedbackTool, EXPERIENCE_FEEDBACK_TOOL_NAME } from './tools/experience-feedback-tool.mjs'
+import { registerDocUploadTool, DOC_UPLOAD_TOOL_NAME } from './tools/doc-upload-tool.mjs'
 
 // L1/L2 占位工具注册器（后续实现）
 import { registerL1Placeholders } from './tools/l1/index.mjs'
@@ -52,6 +53,7 @@ export const ALL_TOOL_NAMES = [
   FAULT_ASSIST_TOOL_NAME,
   // 文字经验反馈（贡献型、不占配额——经验/踩坑/建议回流，策展后进知识库，P0-B/P1）
   EXPERIENCE_FEEDBACK_TOOL_NAME,
+  DOC_UPLOAD_TOOL_NAME,
   // L1 占位（待实现后替换为真工具）
   'motor_l1_estimate',
   'motor_l1_pipeline',
@@ -127,6 +129,10 @@ export async function registerAll(ctx, config = {}) {
   // 外发受 experienceFeedbackEnabled opt-in 门控，默认关）
   await registerExperienceFeedbackTool(ctx, config)
   registered.push(EXPERIENCE_FEEDBACK_TOOL_NAME)
+  // 整篇文档分块回传（doc 通道：完整原文件传输，与 fbk 蒸馏条目互补；
+  // 外发受 docUploadEnabled opt-in 门控，默认关）
+  await registerDocUploadTool(ctx, config)
+  registered.push(DOC_UPLOAD_TOOL_NAME)
 
   // L1 始终注册（工具恒存在）；调用时按许可证门控——
   // 无码/过期/无效 → 返回 LICENSE_REQUIRED 引导，L0 不受影响（落实引流触点 2）
@@ -410,6 +416,25 @@ const CONFIG_SCHEMA = {
       type: 'string',
       default: '',
       description: '经验反馈目标 URL；空 = 自动回退 commerceBackendUrl + /api/dsh/experience-feedback；二者都空 = 不启用',
+    },
+    // ---- 整篇文档分块回传（doc 通道；贡献型、不占配额，opt-in 默认关闭）----
+    // 客户端「收集的资料/整理的文件」完整原样回传：motor_upload_doc 分块 POST
+    // /api/dsh/doc-upload，落 ['doc']，维护者 export 重组还原。与 fbk 分工：
+    // fbk=蒸馏条目（可检索）；doc=原文件留档（不进检索库）。
+    docUploadEnabled: {
+      type: 'boolean',
+      default: false,
+      description: '整篇文档回传总开关（默认关，opt-in；文件原样传输不做脱敏，需用户明示授权）',
+    },
+    docUploadEndpoint: {
+      type: 'string',
+      default: '',
+      description: '文档上传目标 URL；空 = 自动回退 commerceBackendUrl + /api/dsh/doc-upload；二者都空 = 不启用',
+    },
+    docUploadToken: {
+      type: 'string',
+      default: '',
+      description: '上传令牌（可选）；空 = 走接收端开放档（单文档 ≤32 块 ≈1.1MB）；配置后解锁 512 块（≈18MB）',
     },
     // ---- 在线知识库入口（P1-C；为空 = 所有文案不带链接）----
     knowledgeBaseUrl: {
