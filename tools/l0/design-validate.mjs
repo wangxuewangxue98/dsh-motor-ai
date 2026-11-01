@@ -79,7 +79,8 @@ export const TOOL_PARAMS = {
       '每条 actionable 附 kb_hint，每个 issue 附 rule_to_levers',
   },
   leverage_kb: {
-    type: ['string', 'boolean'],
+    // 1.2.6：DSH dsh-tools 编译器不接受数组型 type，改 oneOf（string=按名查询 / boolean=全表）
+    oneOf: [{ type: 'string' }, { type: 'boolean' }],
     description: 'v0.5.5 P2-3 杠杆知识库查询：传 true 返回全表；传杠杆名（如 yoke_thickness/turns_per_coil/' +
       'slot_family）返回该杠杆的「影响指标/调节方向/耦合提示/关联规则 Vxx」。纯本地数据查询。',
   },

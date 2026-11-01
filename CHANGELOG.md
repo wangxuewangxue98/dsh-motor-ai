@@ -1,3 +1,22 @@
+## [1.2.6] - 2026-11-01
+
+修 1.2.5 升级后加载失败（第二类 schema 违规：数组型 type）。
+
+### Fixed（P0 启动失败，第二类）
+- **数组型 `type` 违规**：DSH dsh-tools 编译器只接受单一 type 字符串或 `oneOf`，
+  不接受 `type: ['a','b']`，报 `parameters.leverage_kb.type must be
+  string/number/integer/boolean/null/array/object/json, or use oneOf`：
+  - `tools/l0/design-validate.mjs`：`leverage_kb` `type:['string','boolean']`
+    → `oneOf:[{type:'string'},{type:'boolean'}]`
+  - `index.mjs`：配置项 `line_freq_hz` `type:['number','null']`
+    → `oneOf:[{type:'number'},{type:'null'}]`
+- **配置 schema 补 `additionalProperties: true`**（1.2.5 防线只扫 tools/，index.mjs 配置 schema 漏网）：
+  - `index.mjs` 根 `CONFIG_SCHEMA`、`budget` 配置项。
+- 防线扩展：`scripts/_scan_free_objects.mjs` 纳入 index.mjs 并新增数组型 type 规则
+  （`type: ['` = 违规；全仓仅上述 2 处，修复后 0 命中）。
+- 附带：verify 门禁 + CHANGELOG 同步 1.2.6。另通报教训：1.2.5 发布时防线扫描
+  只覆盖 object 缺 additionalProperties 一类、且未纳入 index.mjs，导致本类漏网。
+
 ## [1.2.5] - 2026-11-01
 
 修插件启用失败（DSH Desktop 新版 schema 编译器零容忍）。

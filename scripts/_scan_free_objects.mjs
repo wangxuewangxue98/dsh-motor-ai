@@ -10,10 +10,16 @@ function glob(dir) {
   );
 }
 let bad = 0;
-for (const f of glob('tools')) {
+for (const f of glob('tools').concat(['index.mjs'])) {
+  if (!fs.existsSync(f)) continue;
   const lines = fs.readFileSync(f, 'utf8').split(/\r?\n/);
   lines.forEach((ln, i) => {
     if (/^\/\//.test(ln.trim())) return; // 跳过注释行
+    // 规则2（1.2.6）：数组型 type —— DSH dsh-tools 编译器只接受单一 type 字符串或 oneOf
+    if (/type:\s*\['/.test(ln)) {
+      console.log('ARRAY-TYPE:', f + ':' + (i + 1), '->', ln.trim().slice(0, 60));
+      bad++;
+    }
     if (/type:\s*'object'/.test(ln) && !/additionalProperties/.test(ln) && !/properties/.test(ln)) {
       for (let j = i + 1; j < lines.length; j++) {
         const t = lines[j].trim();

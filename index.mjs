@@ -160,6 +160,7 @@ export async function registerAll(ctx, config = {}) {
  */
 const CONFIG_SCHEMA = {
   type: 'object',
+  additionalProperties: true,
   properties: {
     level: {
       type: 'string',
@@ -256,7 +257,8 @@ const CONFIG_SCHEMA = {
       description: '默认电机类型（im/synm/pmsm 等，工具入参可覆盖）',
     },
     line_freq_hz: {
-      type: ['number', 'null'],
+      // 1.2.6：DSH dsh-tools 编译器不接受数组型 type，改 oneOf（number / null）
+      oneOf: [{ type: 'number' }, { type: 'null' }],
       default: null,
       description: '工频默认值（行入参缺省时兜底；null = 不注入）',
     },
@@ -489,6 +491,7 @@ const CONFIG_SCHEMA = {
     },
     budget: {
       type: 'object',
+      additionalProperties: true,
       default: { efficiency_pt: 2, temp_k: 10 },
       description: '回归门预算 { efficiency_pt, temp_k }',
     },
