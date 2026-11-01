@@ -59,7 +59,7 @@ export const TOOL_PARAMS = {
       '上下文只回紧凑聚合，明细在 handoff 文件',
   },
   vfd: {
-    type: 'object',
+    type: 'object', additionalProperties: true,
     description: 'v0.6.8 P2：变频驱动建模（M1~M7）。默认 OFF（env DSH_L0_VFD 亦可开）。' +
       'filter(none/dvdt/sine) | cable_m | k_h | fan(self/independent，默认 independent) | ' +
       `carrier_khz(默认 ${CARRIER_DEFAULT_KHZ}Hz，仅记录) | min_speed_rpm | ` +
@@ -69,7 +69,7 @@ export const TOOL_PARAMS = {
       '⚠ 开启后仅新增 *_vfd 字段，不覆写既有温升/损耗/效率（L0 原按 50Hz 正弦计算）。',
   },
   ip67: {
-    type: 'object',
+    type: 'object', additionalProperties: true,
     description: 'v0.6.8 P2：IP67 结构技术点 S1~S8 登记与可喂入项抽取（IEC 60034-5 / GB/T 4942.1）。' +
       '默认 OFF（env DSH_L0_IP67 亦可开）。joint_seal | shaft_seal | terminal_box_gland | ' +
       'lead_capillary_blocked | breather | coating(C3/C4/C5) | insulation_life_years | ' +

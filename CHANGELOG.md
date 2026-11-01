@@ -1,3 +1,24 @@
+## [1.2.5] - 2026-11-01
+
+修插件启用失败（DSH Desktop 新版 schema 编译器零容忍）。
+
+### Fixed（P0 启动失败）
+- **11 处自由 object 参数缺 `additionalProperties`**：新版 `@deepseek-ai/dsh-tools`
+  schema 编译器要求 object 类型显式声明 `additionalProperties`（true/false），
+  缺则 `defineTool` 注册即抛 `JsonSchemaError`（authorError）→ **整个插件启用失败**，
+  报错形如 `parameters.vfd.additionalProperties must be explicitly true or false`。
+  修复（全部补 `additionalProperties: true`，这些对象本就接受任意字段）：
+  - `tools/l0/l0-estimate.mjs`：`vfd`、`ip67`（`fault-assist.mjs` 复用其 TOOL_PARAMS，一并生效）
+  - `tools/l0/pipeline.mjs`：`vfd`、`ip67`
+  - `tools/l2/motorcad-verify.mjs`：`geo`、`limits`、`design`
+  - `tools/l1/rmxprt-solve.mjs`：`spec`、`geo`、`design`、`options`
+- 新增防线扫描 `scripts/_scan_free_objects.mjs`（漏网自由对象=0）；
+  verify.mjs 原有「defineTool output schema 防线」21 文件全绿；版本门禁同步 1.2.5。
+- 附带：L2 开箱默认模板解析（`resolveDefaultMotFile` + 包内 `models/templates/default/{pmsm,induction}.mot`，
+  DSH 自制无版权风险；显式 template > config > env > 包内默认 > 用 MC 当前模型）与
+  `_rmxprt_venv_worker.py` 的 AEDT 示例目录根解析（env > ANSYSEM_ROOT 探测，禁止随包再分发 .aedt），
+  系上一版本已完成待提交内容，随本版一并入库。
+
 ## [1.2.4] - 2026-10-31
 
 同步精简版 l0 0.6.10 的 P0-8 磁密口径统一能力（core 1.5.4）：

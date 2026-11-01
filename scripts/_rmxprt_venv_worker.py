@@ -372,8 +372,51 @@ def kill_aedt_processes():
 # 14 类电机类型注册表 (RMxprt AEDT 2020.1)
 # ============================================================
 
-# AEDT 示例目录根路径
-_AEDT_EXAMPLES = r"D:\Program Files\AnsysEM\AnsysEM20.1\Win64\Examples\RMxprt"
+# AEDT 示例目录根路径 —— env 优先、自动探测兜底、硬编码最后（P0-S1）
+# 优先级: AEDT_EXAMPLES_DIR > ANSYSEM_ROOT/Examples/RMxprt > ProgramFiles\AnsysEM\x.y\Win64\Examples\RMxprt
+# 版权红线: 指向 Ansys 授权安装的 Examples 目录，禁止把 .aedt 文件随包再分发。
+def _resolve_examples_root():
+    """解析 RMxprt 模板示例目录根路径。"""
+    env = os.environ.get("AEDT_EXAMPLES_DIR", "").strip() or \
+          os.environ.get("RMXPRT_EXAMPLES_DIR", "").strip()
+    if env and os.path.isdir(env):
+        return env
+    # 从 ANSYSEM_ROOT 等常见安装根开始向下找 Examples\RMxprt
+    for root_env in ("ANSYSEM_ROOT", "ANSYS_EM_ROOT", "AEDT_ROOT"):
+        r = os.environ.get(root_env, "").strip()
+        if r and os.path.isdir(r):
+            c = os.path.join(r, "Win64", "Examples", "RMxprt")
+            if os.path.isdir(c):
+                return c
+            # 兼容部分安装不含 Win64 的子目录
+            for sub in ("Examples", "Examples\\RMxprt"):
+                p = os.path.join(r, sub)
+                if os.path.isdir(p):
+                    return p
+    # 扫描常见 Program Files 安装根
+    for pf in (os.environ.get("ProgramFiles"), os.environ.get("ProgramW6432"),
+               os.environ.get("ProgramFiles(x86)"), r"D:\Program Files", r"E:\Program Files"):
+        if not pf:
+            continue
+        try:
+            for nm in os.listdir(pf):
+                base = os.path.join(pf, nm)
+                if not os.path.isdir(base):
+                    continue
+                c = os.path.join(base, "Win64", "Examples", "RMxprt")
+                if os.path.isdir(c):
+                    return c
+                for sub in ("Examples", "Examples\\RMxprt"):
+                    p = os.path.join(base, sub)
+                    if os.path.isdir(p):
+                        return p
+        except OSError:
+            continue
+    # 回落到历史硬编码路径（Windows 默认），若不存在则返回空串供调用方报错
+    return r"D:\Program Files\AnsysEM\AnsysEM20.1\Win64\Examples\RMxprt"
+
+
+_AEDT_EXAMPLES = _resolve_examples_root()
 
 # 完整的 14 类电机注册表
 # 每个条目: key → {rmxprt_type, template, design_name, description}

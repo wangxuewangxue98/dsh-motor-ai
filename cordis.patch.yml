@@ -100,3 +100,8 @@
         # 以 design_knowledge_hints 非破坏性追加到结果，不改动原有返回结构。
         designAssistEnabled: true          # 总开关（boolean）；默认开启（opt-out 置 false）
         kbQueryEndpoint: ''                # 知识查询 URL；空 = 回退 commerceBackendUrl + /api/dsh/kb/query
+        # ---- L2 Motor-CAD 默认模板（1.2.5；S2 补齐开箱模板缺口）----
+        # motor_motorcad_verify 未显式传 template 时的 .mot 兜底链：config.motFile
+        # > env MOTORCAD_DEFAULT_MOT > 包内 models/templates/default/（按 motorType 解析）
+        # > 空（用 Motor-CAD 当前模型）。包内模板为 DSH 自制，无 Ansys 示例版权内容。
+        motFile: ''                        # .mot 模板绝对路径（可选）；空 = 走包内默认模板解析

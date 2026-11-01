@@ -1,0 +1,79 @@
+-- DSH Motor-CAD 300kW 异步电机实机口径模板
+-- 版本: dsh-motor-ai@1.2.4
+-- 来源: 真机 Motor-CAD .mot 文件（l2_rated_I312.mot，2026-10-31 耦合解产物）
+--       报告: output/300kW_L2真机风冷耦合解_热设计验证_20261031.md
+--       耦合解 R_th=4.80/4.86 mK/W，基线 260.4kW/η94.57/绕组111.9°C
+-- 用途: L2 motor_motorcad_verify 工具的 300kW 实机默认模板
+-- 版权: DSH 自制，非 Ansys/Motor-CAD 分发包（已从原 .mot 提取关键字段）
+-- 变量名: 覆盖 BPM-Therm / Emag 双候选（见 tools/l2/motorcad-verify.mjs:MOTORCAD_PARAM_CANDIDATES）
+-- 注意: 齿宽 10.16mm 来自真机；Air_Gap=1.16mm 为大电机典型值；R_th 经验带 [3.2,5.4] mK/W
+
+[General]
+Name=DSH_300kW_Induction_Real
+Description=300kW 三相异步电机实机模板 — L2 真机耦合解口径
+Module=BPM-Therm
+
+[Electric]
+Phase_Number=3
+Pole_Pairs=3
+Frequency_Hz=50
+Connection=Y
+Supply_Voltage=380
+Speed_RPM=985
+
+[Magnetic]
+Stator_Lam_Dia=695
+Stator_Bore=480.3
+Stator_Lam_Length=413.4
+Slot_Number=72
+Pole_Number=6
+Slot_Type=Parallel_Tooth
+Slot_Width=7.0
+Slot_Depth=68.75
+Air_Gap=1.16
+Tooth_Width=10.16
+Yoke_Width=12.0
+Rotor_Diameter=478
+Rotor_Slot_Number=72
+Rotor_Slot_Width=6.0
+Rotor_Slot_Depth=35.0
+
+[Winding]
+Turns_per_Coil=1
+Conductors_per_Slot=72
+Coil_Pitch=1.0
+Winding_Type=Wave
+PeakCurrent=441
+DCBusVoltage=976
+
+[Thermal]
+Cooling_Method=TEFC_Axial_Fins
+Ambient_Temperature_C=40
+Max_Temperature_C=180
+
+[Material]
+Stator_Core=27AJDF310
+Rotor_Core=27AJDF310
+Shaft=Steel
+Magnet=--
+End_Windings=Copper
+
+[Bounds]
+Stator_Lam_Dia_Min=400
+Stator_Lam_Dia_Max=900
+Stator_Bore_Min=250
+Stator_Bore_Max=700
+Stator_Lam_Length_Min=200
+Stator_Lam_Length_Max=600
+Slot_Number_Min=36
+Slot_Number_Max=120
+Pole_Number_Min=4
+Pole_Number_Max=12
+Air_Gap_Min=0.5
+Air_Gap_Max=3.0
+
+[Notes]
+此模板提取自真机 l2_rated_I312.mot（Motor-CAD 11.1.5 / BPM-Therm）。
+真机耦合解数据：R_th=4.80/4.86 mK/W（与 L0 链 4.78 三线闭合），基线 260.4kW/η94.57/绕组111.9°C。
+300kW 一阶缩放 Δθ≈79K（经验公式）。
+变量名以 MOTORCAD_PARAM_CANDIDATES 候选表为准，Bridge 侧 SetVariable 失败自动跳过。

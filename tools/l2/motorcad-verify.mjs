@@ -29,6 +29,35 @@ import { withFaultAssistHint } from '../../lib/fault-report.mjs'
 const _here = dirname(fileURLToPath(import.meta.url))
 export const MOTORCAD_BRIDGE_PATH = joinPath(_here, '..', '..', 'scripts', 'motorcad_bridge.py')
 
+/** 默认 .mot 模板目录（随包分发：models/templates/default/）。
+ *  包内不含任何 Ansys/Motor-CAD 商业示例工程——此处模板均为 DSH 自制、符合版权红线。
+ *  优先级：显式 template > 配置默认 > env > 按 motorType 解析包内默认模板 > 空字符串（用 MC 当前模型）*/
+export const DEFAULT_MOT_DIR = joinPath(_here, '..', '..', 'models', 'templates', 'default')
+
+/**
+ * 按 motorType 解析默认 .mot 模板路径（S2：补齐 L2 开箱模板缺口）。
+ *  仅当调用方没显式传 template / config.motFile / env MOTORCAD_DEFAULT_MOT 时兜底。
+ *  @param {object} design 设计对象（含 motorType）
+ *  @returns {string} 模板路径；解析不到或文件不存在时返回空串，调用方保持"用 MC 当前模型"语义
+ */
+export function resolveDefaultMotFile(design = {}) {
+  const type = String(design?.motorType || design?.machine_type || '').trim().toLowerCase()
+  const candidates = new Map([
+    ['induction', 'induction'],
+    ['ind', 'induction'],
+    ['pmsm', 'pmsm'],
+    ['pm', 'pmsm'],
+    ['permanent_magnet', 'pmsm'],
+    ['bldc', 'pmsm'], // BLDC 模板变量集与 PMSM 重叠；Motor-CAD 模板不区分 PMSM/BLDC 时共用
+  ])
+  const key = candidates.get(type) || candidates.get(type.replace(/[_\s]+/g, ''))
+  if (!key) return ''
+  const p = joinPath(DEFAULT_MOT_DIR, `${key}.mot`)
+  if (existsSync(p)) return p
+  // 找不到文件 → 返回空串：降级为「用 MC 当前模型」，避免抛 mot_not_found
+  return ''
+}
+
 /**
  * 设计参数 → Motor-CAD 变量名候选表。
  * 不同 .mot 模块（BPM-Therm / Emag）变量名不一致，故给多个候选，
@@ -442,8 +471,8 @@ export async function registerL2Validate(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        geo: { type: 'object', description: '几何参数' },
-        limits: { type: 'object', description: '约束上限' },
+        geo: { type: 'object', additionalProperties: true, description: '几何参数' },
+        limits: { type: 'object', additionalProperties: true, description: '约束上限' },
       },
       required: ['geo'],
     },
@@ -519,7 +548,7 @@ export async function registerMotorCADVerify(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        design: { type: 'object', description: '完整设计方案' },
+        design: { type: 'object', additionalProperties: true, description: '完整设计方案' },
         template: { type: 'string', description: '.mot 模板路径' },
       },
       required: ['design'],
@@ -581,8 +610,12 @@ export async function registerMotorCADVerify(ctx, config = {}) {
 
       try {
         await session.connect()
-        // 模板优先级：显式 template > 配置默认 > 不指定（用 Motor-CAD 当前模型）
-        const motFile = template || config.motFile || process.env.MOTORCAD_DEFAULT_MOT || ''
+        // 模板优先级：显式 template > 配置默认 > 环境变量 > 按 motorType 解析包内默认模板 > 空串（用 MC 当前模型）
+        const motFile = template
+          || config.motFile
+          || process.env.MOTORCAD_DEFAULT_MOT
+          || resolveDefaultMotFile(design)
+          || ''
         if (motFile) await session.loadMotFile(motFile)
         for (const [k, v] of Object.entries(expandDesignParams(design))) {
           await session.setVariable(k, v)

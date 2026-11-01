@@ -1,0 +1,72 @@
+-- DSH Motor-CAD 异步电机默认模板 (induction)
+-- 版本: dsh-motor-ai@1.2.4
+-- 用途: L2 motor_motorcad_verify 工具在无显式 template 时的开箱默认值
+-- 版权: 自制（非 Ansys 分发包），仅供 dsh-motor-ai 插件内使用
+-- 变量名: 覆盖 BPM-Therm 与 Emag 双候选路径（见 tools/l2/motorcad-verify.mjs:MOTORCAD_PARAM_CANDIDATES）
+-- 注意: tooth_width / Slot_Width 等几何关键变量保持合理默认，用户显式传入时会被 SetVariable 覆盖
+[General]
+Name=DSH_Induction_Default
+Description=三相异步感应电机模板 — 适用于 dsh-motor-ai L2 默认模板
+Module=BPM-Therm
+
+[Electric]
+Phase_Number=3
+Pole_Pairs=2
+Frequency_Hz=50
+Connection=Y
+Supply_Voltage=380
+Speed_RPM=1460
+
+[Magnetic]
+Stator_Lam_Dia=170
+Stator_Bore=85
+Stator_Lam_Length=110
+Slot_Number=36
+Pole_Number=4
+Slot_Type=Open
+Slot_Width=8.5
+Slot_Depth=14
+Air_Gap=0.5
+Tooth_Width=5.2
+Yoke_Width=7.5
+Rotor_Diameter=84
+Rotor_Slot_Number=36
+Rotor_Slot_Width=6.0
+Rotor_Slot_Depth=8.0
+
+[Winding]
+Turns_per_Coil=10
+Conductors_per_Slot=20
+Coil_Pitch=1.0
+Winding_Type=Full_pitch
+
+[Thermal]
+Cooling_Method=IC411
+Ambient_Temperature_C=40
+Max_Temperature_C=155
+
+[Material]
+Stator_Core=27AJDF310
+Rotor_Core=27AJDF310
+Shaft=Steel
+Magnet=--
+End_Windings=Aluminum
+
+[Bounds]
+Stator_Lam_Dia_Min=50
+Stator_Lam_Dia_Max=600
+Stator_Bore_Min=20
+Stator_Bore_Max=400
+Stator_Lam_Length_Min=20
+Stator_Lam_Length_Max=800
+Slot_Number_Min=6
+Slot_Number_Max=120
+Pole_Number_Min=2
+Pole_Number_Max=16
+Air_Gap_Min=0.1
+Air_Gap_Max=3.0
+
+[Notes]
+此模板为 dsh-motor-ai 插件默认模板，不是任何特定电机的设计；
+实际设计请在 DSH 中传入显式设计参数（stator_od / stator_bore / core_length / slots / poles / tooth_width 等）；
+变量名以 MOTORCAD_PARAM_CANDIDATES 中定义的候选为准，Bridge 侧 SetVariable 失败自动跳过。

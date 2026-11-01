@@ -1,0 +1,63 @@
+-- DSH Motor-CAD 15kW 异步电机实机口径模板
+-- 版本: dsh-motor-ai@1.2.4
+-- 来源: 公众号系列第二篇基线算例 (15kW / 1460rpm / 380V / induction)
+--       Top1 OD278 / ID186 / L187.1 / 6极 / 72槽 / η=94.94% (v0.2.3 三步链)
+--       v0.2.5 口径 Top1 OD308 / 4极 / η=94.69%
+-- 用途: L2 motor_motorcad_verify 工具的 15kW 实机默认模板
+-- 版权: DSH 自制，非 Ansys/Motor-CAD 分发包
+-- 变量名: 覆盖 BPM-Therm / Emag 双候选（见 tools/l2/motorcad-verify.mjs:MOTORCAD_PARAM_CANDIDATES）
+-- 注意: tooth_width 为关键网格化参数（历史 BUG11），此处取 15kW 实机典型值 5.2mm
+
+[General]
+Name=DSH_15kW_Induction_Real
+Description=15kW 三相异步电机实机模板 — v0.2.5 系列基线算例口径
+Module=BPM-Therm
+
+[Electric]
+Phase_Number=3
+Pole_Pairs=2
+Frequency_Hz=50
+Connection=Y
+Supply_Voltage=380
+Speed_RPM=1460
+
+[Magnetic]
+Stator_Lam_Dia=170
+Stator_Bore=85
+Stator_Lam_Length=110
+Slot_Number=36
+Pole_Number=4
+Slot_Type=Open
+Slot_Width=8.5
+Slot_Depth=14
+Air_Gap=0.5
+Tooth_Width=5.2
+Yoke_Width=7.5
+Rotor_Diameter=84
+Rotor_Slot_Number=36
+Rotor_Slot_Width=6.0
+Rotor_Slot_Depth=8.0
+
+[Winding]
+Turns_per_Coil=10
+Conductors_per_Slot=20
+Coil_Pitch=1.0
+Winding_Type=Full_pitch
+
+[Thermal]
+Cooling_Method=IC411
+Ambient_Temperature_C=40
+Max_Temperature_C=155
+
+[Material]
+Stator_Core=27AJDF310
+Rotor_Core=27AJDF310
+Shaft=Steel
+Magnet=--
+End_Windings=Aluminum
+
+[Notes]
+此模板来自 dsh-motor-ai 公众号系列第二篇基线算例（15kW/1460rpm/380V 异步）。
+v0.2.3 标准三步链：66 可行 / Top1 OD278 / 6极 / η=94.94%。
+v0.2.5 口径：80 可行 / Top1 OD308 / 4极 / η=94.69%。
+变量名以 MOTORCAD_PARAM_CANDIDATES 候选表为准，Bridge 侧 SetVariable 失败自动跳过。

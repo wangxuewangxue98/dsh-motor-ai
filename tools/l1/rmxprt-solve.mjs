@@ -207,8 +207,8 @@ export async function registerL1Estimate(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        spec: { type: 'object', description: '电机规格参数' },
-        geo: { type: 'object', description: '几何参数' },
+        spec: { type: 'object', additionalProperties: true, description: '电机规格参数' },
+        geo: { type: 'object', additionalProperties: true, description: '几何参数' },
         motorType: { type: 'string', enum: ['pmsm', 'induction', 'bldc'], default: 'pmsm' },
       },
       required: ['spec', 'geo'],
@@ -479,8 +479,8 @@ export async function registerRmxprtSolve(ctx, config = {}) {
     parameters: {
       type: 'object',
       properties: {
-        design: { type: 'object', description: '完整设计方案' },
-        options: { type: 'object', description: '求解选项' },
+        design: { type: 'object', additionalProperties: true, description: '完整设计方案' },
+        options: { type: 'object', additionalProperties: true, description: '求解选项' },
       },
       required: ['design'],
     },
