@@ -20,6 +20,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile, unlink } from 'node:fs/promises'
+import { monitorBridgeChild, classifyStderrMessage } from '../../lib/solve-monitor.mjs'
 import { existsSync } from 'node:fs'
 import { getL1L2License, buildActivationGuide } from '../../lib/license.mjs'
 import { enforceQuota } from '../../lib/quota.mjs'
@@ -116,7 +117,7 @@ function assertWorkerConfigured() {
  * @param {number} timeout - 超时（秒）
  * @returns {Promise<object>} 求解结果
  */
-export async function solveRmxprt(params, paramList, timeout = 120) {
+export async function solveRmxprt(params, paramList, timeout = 120, heartbeatMs = 300000) {
   const taskId = randomUUID().slice(0, 8)
   const paramsPath = join(tmpdir(), `l1_params_${taskId}.json`)
   const outputPath = join(tmpdir(), `l1_results_${taskId}.json`)
@@ -145,32 +146,46 @@ export async function solveRmxprt(params, paramList, timeout = 120) {
       '--aedt-version', params.aedtVersion || '2020.1',
       '--machine-type', params.motorType || 'induction',
     ], {
-      timeout: timeout * 1000,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // v1.2.5：spawn timeout 选项移除，改由 solve-monitor 双监视接管
     })
 
     let stderr = ''
-    child.stderr.on('data', (data) => { stderr += data.toString() })
-
-    child.on('close', async (code) => {
-      // 清理临时文件
-      try {
-        await unlink(paramsPath)
-        await unlink(outputPath)
-        await unlink(varMapPath)
-      } catch {}
-
-      if (code === 0) {
+    // v1.2.5 solve-monitor 轮询监视：stderr 日志流（pyaedt）即心跳——
+    // 无输出超 heartbeatMs 判挂死（reason='heartbeat_stale'）；
+    // 硬超时语义与旧 spawn timeout 一致（reason='timeout'）；stderr 关键词细分故障
+    monitorBridgeChild(child, {
+      hardTimeoutMs: timeout * 1000,
+      heartbeatTimeoutMs: heartbeatMs,
+      label: 'rmxprt-worker',
+      // worker 结果写文件（不走 stdout JSON 行协议），stdout 活动仅作心跳
+    }).then(
+      async (r) => {
+        // 清理临时文件
         try {
-          const result = JSON.parse(await readFile(outputPath, 'utf-8'))
-          resolve(result)
-        } catch (err) {
-          reject(new Error(`RMxprt 结果解析失败: ${err.message}`))
+          await unlink(paramsPath)
+          await unlink(outputPath)
+          await unlink(varMapPath)
+        } catch {}
+        if (r.exitCode === 0) {
+          try {
+            resolve(JSON.parse(await readFile(outputPath, 'utf-8')))
+          } catch (err) {
+            reject(new Error(`RMxprt 结果解析失败: ${err.message}`))
+          }
+        } else {
+          reject(new Error(`RMxprt 求解失败 (code=${r.exitCode}): ${r.stderr.slice(-500)}`))
         }
-      } else {
-        reject(new Error(`RMxprt 求解失败 (code=${code}): ${stderr.slice(-500)}`))
-      }
-    })
+      },
+      (e) => {
+        try { unlink(paramsPath); unlink(outputPath); unlink(varMapPath) } catch {}
+        const cls = classifyStderrMessage(e.stderr || '')
+        if (cls) e.stderrClass = cls
+        reject(new Error(`RMxprt 求解失败（reason=${e.reason}${cls ? `, class=${cls}` : ''}${e.lastStage ? `, lastStage=${e.lastStage}` : ''}）: ${e.message}`))
+      },
+    )
+
+    child.stderr.on('data', (data) => { stderr += data.toString() })
 
     child.on('error', (err) => {
       reject(new Error(`RMxprt 进程启动失败: ${err.message}`))

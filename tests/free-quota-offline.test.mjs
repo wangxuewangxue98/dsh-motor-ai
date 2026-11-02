@@ -23,7 +23,7 @@ function ok(name, cond) {
 }
 
 const quota = await import('../lib/quota.mjs')
-const { assertFreeQuota, checkFreeQuota, QuotaExceededError, getDailyLimit, DEFAULT_FREE_DAILY_LIMIT } = quota
+const { assertFreeQuota, checkFreeQuota, QuotaExceededError, getDailyLimit, DEFAULT_FREE_DAILY_LIMIT, newQuotaChain, withQuotaChain } = quota
 
 const QUOTA_FILE = join(TMP, 'storages', 'dsh-motor-ai', 'free-quota.json')
 const ACT_FILE = join(TMP, 'storages', 'dsh-motor-ai', 'activation.json')
@@ -90,8 +90,8 @@ ok('付费档不占用免费档计数（free=0）', readUsed() === 0)
 ok('付费档计入 paid 档计数（paid=1）', readPaid() === 1)
 resetFree()
 
-// 3. 调用链内顺序兄弟只计 1 次（pipeline 模型）
-console.log('[3] 同一 config 的兄弟调用只计 1 次')
+// 3. 同一调用链只计 1 次（rc.14 显式调用链令牌：pipeline 新建令牌并派生 config 透传）
+console.log('[3] 同一调用链只计 1 次（rc.14 令牌制）')
 await tick()
 resetFree()
 function leafA(c) {
@@ -101,11 +101,21 @@ function leafB(c) {
   assertFreeQuota('b', c)
 }
 function pipeline(c) {
-  leafA(c)
-  leafB(c)
+  const token = newQuotaChain()
+  leafA(withQuotaChain(c, token))
+  leafB(withQuotaChain(c, token))
 }
 pipeline({})
-ok('顺序兄弟（build+validate）只 +1', readUsed() === 1)
+ok('同链兄弟（build+validate）只 +1', readUsed() === 1)
+// rc.14 反向防线（P0-门1'）：同步循环复用同一 config 引用 → 每次顶层调用
+// 令牌不同 ⇒ 各计一次（rc.13 的 WeakSet+微任务写法整批只扣 1 次，门禁形同虚设）
+let batchThrew = false
+try {
+  for (let i = 0; i < 11; i++) pipeline({})
+} catch (e) {
+  batchThrew = e instanceof QuotaExceededError
+}
+ok('同步批量复用同 config 各计一次（第 11 次 fail-closed）', batchThrew && readUsed() === 10)
 
 // 4. 跨天自动重置
 console.log('[4] 跨天重置')

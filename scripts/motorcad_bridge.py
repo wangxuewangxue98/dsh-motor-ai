@@ -31,6 +31,7 @@ import time
 import ctypes
 import logging
 import subprocess
+import threading
 
 # stdout 只允许一行 JSON；日志走 stderr
 try:
@@ -86,9 +87,50 @@ class BridgeError(Exception):
         self.reason = reason
 
 
+# ---- 心跳/进度轮询（v1.2.5 solve-monitor 配套）----
+# Node 侧监视器（lib/solve-monitor.mjs）对长解算任务做「硬超时 + 心跳超时」双监视：
+# COM 阻塞调用（如 DoMagneticCalculation，单次可长达十几分钟）期间主线程无输出，
+# 心跳线程周期性向 stdout 发 {"ev":"progress"} 行，让 Node 能区分「慢解」与「挂死」。
+# 协议兼容：结果行恒为最后一个非空行（_DONE 后心跳停发），旧解析方式不受影响。
+_EMIT_LOCK = threading.Lock()
+_STAGE = {"cur": "boot"}
+_DONE = {"flag": False}
+
+
 def _emit(obj):
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
+    is_progress = isinstance(obj, dict) and obj.get("ev") == "progress"
+    with _EMIT_LOCK:
+        if is_progress and _DONE["flag"]:
+            return  # 结果行已发，迟到心跳丢弃（保证最后一行恒为结果）
+        sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+        if not is_progress:
+            _DONE["flag"] = True  # 非心跳行 = 最终结果行，此后心跳停发
+
+
+def _set_stage(stage):
+    _STAGE["cur"] = stage
+
+
+def _heartbeat_loop(interval_s=30):
+    t0 = time.time()
+    while not _DONE["flag"]:
+        time.sleep(min(1.0, interval_s))
+        if _DONE["flag"]:
+            break
+        if time.time() - t0 >= interval_s:
+            t0 = time.time()
+            _emit({"ev": "progress", "stage": _STAGE["cur"],
+                   "elapsed_s": round(time.time() - _T0, 1)})
+
+
+_T0 = time.time()
+
+
+def _start_heartbeat(interval_s=30):
+    th = threading.Thread(target=_heartbeat_loop, args=(interval_s,), daemon=True)
+    th.start()
+    return th
 
 
 def _find_exe(exe_path="", install_dir=""):
@@ -409,12 +451,14 @@ def action_verify(req):
         raise BridgeError("mot_not_found", f".mot 文件不存在: {mot}")
 
     progid = req.get("progid") or DEFAULT_PROGID
+    _set_stage("connect")
     mc = connect(exe, inst, progid, int(req.get("full_load_wait", 90)))
     result = {"ok": True, "method": "motorcad-com-fea", "progid": progid,
               "exe_path": exe, "model": {}, "thermal": {}, "emag": {}}
     started = time.time()
     try:
         if mot:
+            _set_stage("load_model")
             logger.info(f"加载 {mot}")
             try:
                 mc.LoadFromFile(mot)
@@ -423,6 +467,7 @@ def action_verify(req):
             time.sleep(8)
 
         # 设置设计参数（逐个 try，失败不中断）
+        _set_stage("set_params")
         applied = {}
         for k, v in (req.get("params") or {}).items():
             try:
@@ -433,12 +478,14 @@ def action_verify(req):
                 logger.warning(f"SetVariable({k}) 失败: {e}")
         result["applied_params"] = applied
 
+        _set_stage("read_model")
         for name in READABLE_PARAMS:
             v = _get(mc, name, set(READABLE_PARAMS))
             if v is not None:
                 result["model"][name] = v
 
         if req.get("run_thermal", True):
+            _set_stage("solve_thermal")
             t0 = time.time()
             try:
                 ret = mc.DoSteadyStateAnalysis()
@@ -452,6 +499,7 @@ def action_verify(req):
                 result["thermal_error"] = str(e)
 
         if req.get("run_emag", True):
+            _set_stage("solve_emag")
             t0 = time.time()
             try:
                 mc.ShowMagneticContext()
@@ -480,6 +528,7 @@ def action_verify(req):
 
         save_to = req.get("save_to")
         if save_to:
+            _set_stage("save_model")
             try:
                 mc.SaveToFile(save_to)
                 result["saved_to"] = save_to
@@ -498,6 +547,7 @@ def action_verify(req):
 
 
 def main():
+    _start_heartbeat(30)  # v1.2.5：stdout 心跳行，供 Node solve-monitor 轮询区分慢解/挂死
     try:
         raw = sys.stdin.read()
         req = json.loads(raw) if raw.strip() else {}
@@ -508,6 +558,7 @@ def main():
     action = req.get("action", "verify")
     try:
         if action == "ping":
+            _set_stage("ping")
             action_ping(req)
         elif action == "verify":
             action_verify(req)

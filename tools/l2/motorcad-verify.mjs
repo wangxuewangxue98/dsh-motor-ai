@@ -23,6 +23,7 @@ import { enforceQuota } from '../../lib/quota.mjs'
 import { probeL2, buildEnvGuide } from '../../lib/env-probe.mjs'
 import { getUsageSink, logUsage } from '@wangxue98/dsh-motor-ai-core'
 import { scheduleTelemetry } from '../../lib/telemetry.mjs'
+import { monitorBridgeChild, classifyStderrMessage } from '../../lib/solve-monitor.mjs'
 import { withFaultAssistHint } from '../../lib/fault-report.mjs'
 
 /** bridge 脚本路径（随包分发：scripts/motorcad_bridge.py） */
@@ -240,8 +241,12 @@ export function resolveMotorcadPython(config = {}) {
   return candidates
 }
 
-/** 运行 bridge：返回解析后的 JSON；stderr 仅作诊断日志 */
-function runBridge(python, payload, timeoutMs = 600000) {
+/** 运行 bridge：返回解析后的 JSON；stderr 仅作诊断日志。
+ *  v1.2.5：内部换用 solve-monitor 轮询监视（硬超时 + 心跳超时双监视 + stderr 故障分类），
+ *  bridge（v1.2.5+）每 30s 发 stdout 心跳行 → 可区分「慢解 / 挂死/模态框阻塞」；
+ *  旧 bridge（无心跳）下 stdout 长时间静默会触发 heartbeat_stale —— 由调用方以
+ *  heartbeatMs 参数控制（0 = 关闭心跳检测，退化为旧版纯硬超时语义）。 */
+function runBridge(python, payload, timeoutMs = 600000, heartbeatMs = 0) {
   return new Promise((resolve, reject) => {
     if (!existsSync(MOTORCAD_BRIDGE_PATH)) {
       reject(Object.assign(new Error(`bridge 脚本缺失: ${MOTORCAD_BRIDGE_PATH}`),
@@ -252,46 +257,19 @@ function runBridge(python, payload, timeoutMs = 600000) {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })
-    let out = ''
-    let err = ''
-    let done = false
-    const timer = setTimeout(() => {
-      if (done) return
-      done = true
-      try { child.kill('SIGKILL') } catch { /* noop */ }
-      reject(Object.assign(new Error(`Motor-CAD 求解超时（${timeoutMs}ms）`),
-        { reason: 'timeout' }))
-    }, timeoutMs)
-
-    child.stdout.on('data', (d) => { out += d.toString('utf8') })
-    child.stderr.on('data', (d) => { err += d.toString('utf8') })
-    child.on('error', (e) => {
-      if (done) return
-      done = true; clearTimeout(timer)
-      reject(Object.assign(new Error(`无法启动 Python(${python}): ${e.message}`),
-        { reason: 'python_unavailable' }))
-    })
-    child.on('close', (code) => {
-      if (done) return
-      done = true; clearTimeout(timer)
-      const line = out.trim().split(/\r?\n/).filter(Boolean).pop()
-      if (!line) {
-        const e = new Error(`bridge 无输出（exit=${code}）${err ? ' | ' + err.slice(-300) : ''}`)
-        reject(Object.assign(e, { reason: 'no_output', stderr: err }))
-        return
-      }
-      try {
-        resolve({ body: JSON.parse(line), exitCode: code, stderr: err })
-      } catch {
-        reject(Object.assign(new Error(`bridge 输出非 JSON: ${line.slice(0, 200)}`),
-          { reason: 'bad_json', stderr: err }))
-      }
-    })
+    monitorBridgeChild(child, {
+      hardTimeoutMs: timeoutMs,
+      heartbeatTimeoutMs: heartbeatMs,
+      label: 'motorcad-bridge',
+    }).then(
+      (r) => resolve({ body: r.body, exitCode: r.exitCode, stderr: r.stderr,
+        progressEvents: r.progressEvents, elapsedMs: r.elapsedMs }),
+      (e) => reject(e),
+    )
     try {
       child.stdin.write(JSON.stringify(payload), 'utf8')
       child.stdin.end()
     } catch (e) {
-      done = true; clearTimeout(timer)
       reject(Object.assign(new Error(`写入 bridge 失败: ${e.message}`), { reason: 'stdin_failed' }))
     }
   })
@@ -319,6 +297,9 @@ export class MotorCADSession {
     this._result = null
     this._python = null
     this._timeoutMs = Number(opts.timeoutMs || 600000)
+    // v1.2.5 心跳监视：bridge 每 30s 发 stdout 心跳，默认 5min 无输出判挂死；
+    // 0 = 关闭心跳检测（退化为旧版纯硬超时）。桥接与主程序同包分发，无版本错配窗口。
+    this._heartbeatMs = (opts.heartbeatMs != null) ? Number(opts.heartbeatMs) : 300000
     this._ratedPowerW = Number(opts.ratedPowerW || 0) || null
   }
 
@@ -335,7 +316,7 @@ export class MotorCADSession {
           exe_path: this._opts.motorcadPath || process.env.MOTORCAD_PATH || '',
           install_dir: this._opts.motorcadInstallDir || process.env.MOTORCAD_INSTALL_DIR || '',
           progid: this._opts.progid || 'MotorCAD.AppAutomation',
-        }, Math.min(this._timeoutMs, 30000))
+        }, Math.min(this._timeoutMs, 30000), Math.min(this._heartbeatMs, 30000))
         if (body && body.ok && body.ready) {
           this._python = py
           this._ping = body
@@ -347,7 +328,17 @@ export class MotorCADSession {
           { reason: 'env_not_ready', ping: body }
         )
       } catch (e) {
-        lastErr = e
+        // 会话层 reason 语义收敛：解释器能启动（spawn 成功）但 bridge 无输出/输出异常
+        // （no_output / bad_json，典型为缺 pywin32 等依赖硬崩）⇒ 归类 env_not_ready，
+        // 不让桥协议层 reason 泄漏到上层；python_unavailable / bridge_missing 保留原语义。
+        if (e && (e.reason === 'no_output' || e.reason === 'bad_json')) {
+          lastErr = Object.assign(
+            new Error(`bridge 异常退出（python=${py}）: ${e.message}`),
+            { reason: 'env_not_ready', cause: e }
+          )
+        } else {
+          lastErr = e
+        }
       }
       reasons.push(lastErr?.reason || 'unknown')
     }
@@ -405,7 +396,7 @@ export class MotorCADSession {
       save_to: this._opts.saveTo || '',
       progid: this._opts.progid || 'MotorCAD.AppAutomation',
       rated_power_w: this._ratedPowerW || 0,
-    }, this._timeoutMs)
+    }, this._timeoutMs, this._heartbeatMs)
     if (!body || body.ok !== true) {
       const e = new Error(body?.error || 'Motor-CAD 求解失败')
       throw Object.assign(e, { reason: body?.reason || 'solve_failed', detail: body })
@@ -669,6 +660,12 @@ export async function registerMotorCADVerify(ctx, config = {}) {
             mesh_precheck: mesh,
             com_error: err.message,
             com_reason: err.reason || 'unknown',
+            solve_monitor: {
+              stderr_class: err.stderrClass || null,
+              last_stage: err.lastStage || null,
+              elapsed_ms: err.elapsedMs || null,
+              progress_tail: (err.progressEvents || []).slice(-3),
+            },
             l0_estimate: l0,
             message: 'Motor-CAD COM 直驱不可用，已降级为等效电路法估算（非 FEA）',
             confidence: 'low',
@@ -677,7 +674,11 @@ export async function registerMotorCADVerify(ctx, config = {}) {
               ? '请安装 Motor-CAD 并确保 Python 装有 pywin32（pip install pywin32）；可设 MOTORCAD_PYTHON 指定解释器。'
               : err.reason === 'timeout'
                 ? 'Motor-CAD 求解超时（电磁分析约 190-200s），可增大 motorcadTimeoutMs 后重试。'
-                : '请检查 Motor-CAD ActiveX 注册模式（默认设置 → 控件注册 → 单客户端设置）。',
+                : err.reason === 'heartbeat_stale'
+                  ? `解算过程长时间无输出（最后阶段=${err.lastStage || 'n/a'}），疑似挂死或 Motor-CAD 弹出模态对话框——请到 GUI 检查是否有未关弹窗，或增大 motorcadHeartbeatMs 后重试。`
+                  : err.stderrClass === 'license_conflict'
+                    ? 'Motor-CAD 许可冲突（加密狗被其它实例占用）：本机许可约 2 个并发席位，请减少并发或稍后重试。'
+                    : '请检查 Motor-CAD ActiveX 注册模式（默认设置 → 控件注册 → 单客户端设置）。',
             report: buildL2ReportField(err),
           }
         }

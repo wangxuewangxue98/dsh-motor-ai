@@ -27,6 +27,11 @@ function ok(cond, name, extra = '') {
 const here = join(fileURLToPath(import.meta.url), '..', '..')
 const WORKER = join(here, 'scripts', '_rmxprt_venv_worker.py')
 
+// 隔离 env-cache / activation 落点：resolvePythonCandidates 的 D 增强
+// （缓存 venv python 最高优先自愈）会读本机真实缓存，污染候选链断言。
+// 指向空临时目录后，缓存恒为空，断言只验证候选链本身。
+process.env.DSH_HOME = mkdtempSync(join(tmpdir(), 'envprobe-test-'))
+
 // ---------- 1) 候选链 ----------
 console.log('\n== resolvePythonCandidates 候选链 ==')
 {

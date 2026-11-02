@@ -1,4 +1,38 @@
-## [1.2.6] - 2026-11-01
+## [1.2.7] - 2026-11-02
+
+L1/L2 解算过程轮询监视（solve-monitor）+ 门禁修复。
+
+### Added（L1/L2 解算轮询监视）
+- **新模块 `lib/solve-monitor.mjs`（零依赖）**：
+  - `monitorBridgeChild`：硬超时 + 心跳超时双监视——任何 stdout/stderr 输出刷新心跳
+    （L1 的 pyaedt 日志流天然是心跳）；stdout 中 `{"ev":"progress","stage":...}` 心跳行
+    作为进度事件上报；心跳过期 ⇒ `heartbeat_stale`（挂死/模态框阻塞特征，附最后阶段），
+    硬超时语义与旧版完全一致。
+  - `classifyStderrMessage`：stderr 故障细分类——`license_conflict`（加密狗被占）/ 
+    `com_error` / `pywin32_missing`（300kW 真机 L2 实战经验固化进代码）。
+- **`scripts/motorcad_bridge.py` 心跳线程**：COM 阻塞调用期间（单解可达十几分钟）
+  daemon 线程每 30s 发心跳行；`action_verify` 全程 8 阶段打点（connect → load_model → 
+  set_params → read_model → solve_thermal → solve_emag → collect → save_model）；
+  `_EMIT_LOCK` 锁 + 结果行后迟到心跳丢弃，保证「最后一行恒为结果 JSON」旧契约不破坏。
+- **L2 `tools/l2/motorcad-verify.mjs`**：`runBridge` 换监视器（`heartbeatMs` 默认 300s，
+  0 = 关闭心跳检测退化为旧版纯硬超时）；降级返回新增 `solve_monitor` 诊断块
+  （stderr 分类/最后阶段/进度尾部）；`heartbeat_stale` 与 `license_conflict` 各配专属 suggestion。
+- **L1 `tools/l1/rmxprt-solve.mjs`**：移除 spawn 一刀切 `timeout` 选项，换双监视
+  （秒级磁路解同样被挂死检测覆盖）。
+- 新门禁 `tests/solve-monitor.test.mjs`：17 断言（心跳刷新/心跳过期/硬超时/无输出/
+  非法 JSON/进度行契约/真 bridge ping 冒烟——心跳线程开启下「最后一行=结果」实测无破坏）。
+
+### Fixed（门禁修复，全量 14/14 首次全绿）
+- **`tests/env-probe.test.mjs`**：测试头设 `DSH_HOME` 临时目录隔离 env-cache——
+  D 增强「缓存 venv python 候选链最高优先（自愈）」会读本机真实缓存污染候选链断言
+  （3 红修复，27/3 → 30/0）。
+- **`tests/free-quota-offline.test.mjs`**：[3] 从 rc.13「config 引用去重」旧语义改写为
+  rc.14 显式调用链令牌制（`newQuotaChain`/`withQuotaChain`），并新增反向防线断言
+  （同步循环复用同一 config 引用各计一次，第 11 次 `QuotaExceededError`——防整批脱闸回归）。
+- **`tools/l2/motorcad-verify.mjs` `connect()` reason 语义收敛**：解释器能启动但 bridge
+  无输出/输出异常时（`no_output`/`bad_json`，典型为缺 pywin32 硬崩），桥协议层 reason
+  不再泄漏到会话层，收敛翻译为 `env_not_ready`（附 cause）；`python_unavailable`/ 
+  `bridge_missing` 保留原语义。
 
 修 1.2.5 升级后加载失败（第二类 schema 违规：数组型 type）。
 
